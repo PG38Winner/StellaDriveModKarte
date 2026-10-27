@@ -13,7 +13,7 @@ using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.0.0", "paulg")]
+[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.1.0", "paulg")]
 [assembly: MelonGame("CuriousOwlGames", "StellarDrive")]
 
 namespace StellarMap
@@ -155,6 +155,7 @@ namespace StellarMap
             // run off the main thread.
             _busy = true;
             bool names = _includePlayerNames.Value;
+            bool host = IsHost();
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
@@ -174,7 +175,7 @@ namespace StellarMap
                 }
                 catch (Exception e) { Fail("Export failed: " + e.Message); }
                 finally { _busy = false; }
-                MaybePublish();
+                MaybePublish(host);
             });
         }
 
@@ -188,9 +189,35 @@ namespace StellarMap
 
         // ---------- GitHub publishing ----------
 
-        void MaybePublish()
+        PropertyInfo _isServerStarted;
+        bool _hostLookupDone, _loggedNotHost;
+
+        // Every player needs the mod (the game checks the mod list on join), but only the PC that
+        // hosts the world may publish; otherwise each client would overwrite the map. Singleplayer
+        // counts as host. If the check is not available, nothing is published.
+        bool IsHost()
+        {
+            if (!_hostLookupDone)
+            {
+                _hostLookupDone = true;
+                var finder = AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(a => a.GetType("FishNet.InstanceFinder", false)).FirstOrDefault(t => t != null);
+                _isServerStarted = finder?.GetProperty("IsServerStarted", BindingFlags.Public | BindingFlags.Static);
+                if (_isServerStarted == null) Log.Warning("FishNet host check not found; publishing disabled.");
+            }
+            try { return _isServerStarted != null && (bool)_isServerStarted.GetValue(null, null); }
+            catch { return false; }
+        }
+
+        void MaybePublish(bool host)
         {
             if (!_publish.Value || _publishing) return;
+            if (!host)
+            {
+                if (!_loggedNotHost) { _loggedNotHost = true; Log.Msg("Not the host of this world; map is not published (local map still works)."); }
+                return;
+            }
+            _loggedNotHost = false;
             var json = _lastJson;
             if (json == null || json == _lastPublishedJson) return;
             // Only the time stamp changed? Then there is nothing new to show.

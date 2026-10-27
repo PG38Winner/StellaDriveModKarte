@@ -8,6 +8,8 @@ Eine MelonLoader-Mod (`mod/StellarMap.cs`) und eine Webseite (`index.html`), die
 2. Lokal ist die Karte unter <http://localhost:8787/> erreichbar, solange das Spiel läuft. Der Server ist nur auf diesem PC erreichbar.
 3. Mit `Publish = true` pusht die Mod `map.json` alle 60 s in den Branch `live-data` dieses Repos, und zwar immer als einen einzigen Commit, damit der Branch nicht wächst. Die Seite auf GitHub Pages liest die Datei von dort.
 
+Das Spiel verlangt, dass alle Mitspieler dieselben Mods haben. Deshalb läuft StellarMap auch bei ihnen, veröffentlicht wird aber nur vom PC, der die Welt hostet (FishNet `IsServerStarted`; Einzelspieler zählt als Host). Bei Mitspielern bleibt die lokale Karte unter localhost aktiv.
+
 Auf der Seite kann man außerdem eine `world.json` per Knopf oder Drag & Drop laden. Dafür muss das Spiel nicht laufen.
 
 ## Bauen und installieren
