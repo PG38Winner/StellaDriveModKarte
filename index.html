@@ -84,6 +84,8 @@ const sun=new T.DirectionalLight(0xfff1dc,1.3);sun.position.set(.6,1,.4);scene.a
 const rim=new T.DirectionalLight(0x6f9bff,.5);rim.position.set(-.5,.2,-.6);scene.add(rim);
 // Spielkoordinaten sind linkshändig (Unity): z spiegeln. three.js dreht die Flächen bei negativer Determinante selbst um.
 const world=new T.Group();world.scale.z=-1;scene.add(world);
+// Auf Planeten zeigt die y-Achse des Spielraums nicht nach oben. lvl dreht jeden Ort so, dass das größte Schiff waagerecht liegt.
+const lvl=new T.Group();world.add(lvl);let levelFor=null;
 const box=new T.BoxGeometry(1,1,1),hullMat=new T.MeshStandardMaterial({roughness:.6,metalness:.2});
 // Teiltypen 1 bis 3 sind Schrägen und Ecken; als etwas kleinere Würfel gezeigt.
 const SCALE=[1,.8,.7,.6];
@@ -143,10 +145,10 @@ function label(text,color,big){
 // Schiffe bleiben zwischen zwei Updates erhalten: Ändert sich nur die Lage, wird nur die Matrix gesetzt.
 // Neu gebaut wird ein Schiff nur, wenn sich seine Hülle oder sein Name ändert.
 function hullSig(h){let x=h.length;for(let i=0;i<h.length;i++)x=(Math.imul(x,31)+h[i])|0;return x}
-function dropShip(id){const o=shipObjs[id];if(!o)return;world.remove(o.g);if(o.im)o.im.dispose();labels=labels.filter(l=>l!==o.lb);delete shipObjs[id]}
+function dropShip(id){const o=shipObjs[id];if(!o)return;lvl.remove(o.g);if(o.im)o.im.dispose();labels=labels.filter(l=>l!==o.lb);delete shipObjs[id]}
 const tmpM=new T.Matrix4(),tmpC=new T.Color(),tmpS=new T.Vector3(),tmpQ=new T.Quaternion(),tmpP=new T.Vector3();
 function makeShip(s,sig){
- const g=new T.Group();g.matrixAutoUpdate=false;world.add(g);
+ const g=new T.Group();g.matrixAutoUpdate=false;lvl.add(g);
  const n=s.hull.length/5,bb=new T.Box3();let im=null;
  if(n){im=new T.InstancedMesh(box,hullMat,n);
   for(let i=0;i<n;i++){const o=i*5,sc=SCALE[s.hull[o+3]]||.8;tmpP.set(s.hull[o],s.hull[o+1],s.hull[o+2]);tmpM.compose(tmpP,tmpQ.identity(),tmpS.set(sc,sc,sc));im.setMatrixAt(i,tmpM);
@@ -158,7 +160,7 @@ function makeShip(s,sig){
  return{g,bb,im,lb,sig};
 }
 const playerGeo=new T.CylinderGeometry(.35,.35,1.7,12),playerMat=new T.MeshStandardMaterial({color:0xffffff,emissive:0x9fd4ff,emissiveIntensity:.8});
-const playersG=new T.Group();world.add(playersG);
+const playersG=new T.Group();lvl.add(playersG);
 function build(place){
  const keep=new Set(place?place.ships.map(s=>String(s.id)):[]);
  for(const id of Object.keys(shipObjs))if(!keep.has(id))dropShip(id);
@@ -167,6 +169,11 @@ function build(place){
   if(!shipObjs[s.id]||shipObjs[s.id].sig!==sig){dropShip(String(s.id));shipObjs[s.id]=makeShip(s,sig)}
   const g=shipObjs[s.id].g;g.matrix.copy(shipMatrix(s));g.matrixWorldNeedsUpdate=true;
  }
+ // Nur beim Ortswechsel neu ausrichten, damit die Ansicht bei Live-Updates nicht wackelt.
+ if(place&&levelFor!==place.id){levelFor=place.id;
+  const big=place.ships.slice().sort((a,b)=>b.hull.length-a.hull.length)[0],q=new T.Quaternion();
+  if(big){shipMatrix(big).decompose(tmpP,q,tmpS);lvl.quaternion.setFromUnitVectors(new T.Vector3(0,1,0).applyQuaternion(q),new T.Vector3(0,1,0))}
+  else lvl.quaternion.identity()}
  labels=labels.filter(l=>l.parent!==playersG&&!(l.parent&&l.parent.parent===playersG));
  playersG.clear();
  for(const p of place?place.players:[]){
@@ -227,7 +234,7 @@ async function poll(){
  catch(e){if(!data)stat('Keine Live-Daten. Läuft das Spiel mit der Mod? Du kannst auch eine world.json laden.','err');else stat('Verbindung verloren, zeige letzten Stand','err')}
 }
 $('loc').onchange=e=>{loc=e.target.value;sel=null;const p=places.find(p=>p.id==loc);build(p);lists(p);focus(null)};
-function readFile(f){if(!f)return;const r=new FileReader();r.onload=()=>{try{fileMode=true;sel=null;loc=null;show(JSON.parse(r.result.replace(/^﻿/,'')),true)}catch(e){stat('Datei ist keine gültige world.json','err')}};r.readAsText(f)}
+function readFile(f){if(!f)return;const r=new FileReader();r.onload=()=>{try{fileMode=true;sel=null;loc=null;levelFor=null;show(JSON.parse(r.result.replace(/^﻿/,'')),true)}catch(e){stat('Datei ist keine gültige world.json','err')}};r.readAsText(f)}
 $('bFile').onclick=()=>$('file').click();$('file').onchange=e=>readFile(e.target.files[0]);
 addEventListener('dragover',e=>{e.preventDefault();document.body.classList.add('dragging')});
 addEventListener('dragleave',e=>{if(!e.relatedTarget)document.body.classList.remove('dragging')});
