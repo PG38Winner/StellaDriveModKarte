@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>StellarDrive Live-Karte</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Live-Karte einer StellarDrive-Welt: Schiffe, Stationen und Spieler.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600&display=swap">
+<style>
+:root{color-scheme:dark;--fg:#eaf0ff;--mut:#97a3bf;--card:rgba(10,15,28,.78);--line:rgba(160,182,226,.2);--acc:#FAC775;--ok:#9FE1CB;--bad:#F0997B;box-sizing:border-box}
+*{box-sizing:inherit}
+html,body{height:100%}
+body{margin:0;background:#03050b;color:var(--fg);font:14px/1.45 Sora,system-ui,sans-serif;overflow:hidden}
+#stage{position:fixed;inset:0}#stage canvas{display:block;cursor:grab}
+#side{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:12px;width:min(340px,calc(100vw - 24px));max-height:calc(100% - 96px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:10px;pointer-events:none}
+.card{background:var(--card);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px;padding:12px 14px;pointer-events:auto}
+#lists{overflow-y:auto;overflow-x:hidden;min-height:0}
+h1{font-size:18px;font-weight:600;margin:0 0 2px}
+h2{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:12px 0 6px}
+h2:first-child{margin-top:0}
+.sub{color:var(--mut);font-size:12.5px;margin:0}
+#status{display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12.5px;color:var(--mut)}
+#dot{width:8px;height:8px;border-radius:50%;background:var(--mut);flex:none}
+#dot.live{background:var(--ok);box-shadow:0 0 0 0 rgba(159,225,203,.6);animation:pulse 2s infinite}
+#dot.old{background:var(--acc)}#dot.err{background:var(--bad)}
+@keyframes pulse{70%{box-shadow:0 0 0 7px rgba(159,225,203,0)}100%{box-shadow:0 0 0 0 rgba(159,225,203,0)}}
+@media(prefers-reduced-motion:reduce){#dot.live{animation:none}}
+select{width:100%;font:inherit;font-size:13px;color:var(--fg);background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:9px;padding:7px 9px;margin-top:10px}
+ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+li button{width:100%;text-align:left;font:inherit;color:var(--fg);background:transparent;border:1px solid transparent;border-radius:9px;padding:6px 8px;cursor:pointer;display:flex;align-items:center;gap:8px}
+li button:hover{background:rgba(255,255,255,.06)}
+li button[aria-pressed=true]{background:rgba(255,255,255,.11);border-color:var(--line)}
+li .t{flex:1;min-width:0;display:flex;flex-direction:column}
+li .n,li .m{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+li .m{color:var(--mut);font-size:12px;font-variant-numeric:tabular-nums}
+li i{width:9px;height:9px;border-radius:3px;flex:none;align-self:flex-start;margin-top:6px}
+.empty{color:var(--mut);font-size:12.5px;margin:0}
+#bar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;background:var(--card);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px}
+#bar button,#bar a{font:inherit;font-size:13px;color:var(--mut);background:transparent;border:1px solid transparent;border-radius:9px;padding:7px 12px;cursor:pointer;text-decoration:none}
+#bar button[aria-pressed=true]{color:var(--fg);background:rgba(255,255,255,.1);border-color:var(--line)}
+#bar button:hover,#bar a:hover{color:var(--fg)}
+button:focus-visible,a:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+#drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(3,5,11,.8);font-size:18px;border:3px dashed var(--acc);z-index:5}
+body.dragging #drop{display:flex}
+@media(max-width:560px){#side{max-height:46%}#lists h2{margin-top:8px}}
+</style></head><body>
+<div id="stage" aria-label="Drehbare 3D-Karte der Schiffe und Spieler am gewählten Ort"></div>
+<div id="side">
+ <div class="card">
+  <h1 id="title">StellarDrive Live-Karte</h1>
+  <p class="sub" id="world">Lade Daten …</p>
+  <div id="status" aria-live="polite"><span id="dot"></span><span id="stat">Verbinde …</span></div>
+  <select id="loc" aria-label="Ort wählen"></select>
+ </div>
+ <div class="card" id="lists">
+  <h2>Schiffe</h2><ul id="ships"></ul>
+  <h2>Spieler</h2><ul id="players"></ul>
+ </div>
+</div>
+<div id="bar">
+ <button id="bRot" aria-pressed="false">Drehen</button><button id="bLab" aria-pressed="true">Namen</button><button id="bReset">Ansicht zurücksetzen</button><button id="bFile">world.json laden</button><a href="Orbitalstation,%203D-Modell%20V1.html">Stationsmodell</a>
+ <input type="file" id="file" accept=".json,application/json" hidden>
+</div>
+<div id="drop">world.json hier ablegen</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const T=THREE,$=i=>document.getElementById(i);
+// ---------- Datenquelle ----------
+// GitHub Pages: map.json aus dem Branch live-data, den die Mod pusht. Lokal (Mod-Server): map.json daneben.
+const qs=new URLSearchParams(location.search);
+const SRC=qs.get('src')||(location.hostname.endsWith('.github.io')
+ ?`https://raw.githubusercontent.com/${location.hostname.split('.')[0]}/${location.pathname.split('/')[1]}/live-data/map.json`
+ :'map.json');
+const REFRESH=location.hostname.endsWith('.github.io')?30000:10000;
+// ---------- Szene ----------
+const scene=new T.Scene();scene.background=new T.Color(0x03050b);
+const cam=new T.PerspectiveCamera(45,1,.3,20000);cam.position.set(60,50,70);
+const ren=new T.WebGLRenderer({antialias:true});ren.setPixelRatio(Math.min(devicePixelRatio,2));ren.outputEncoding=T.sRGBEncoding;$('stage').appendChild(ren.domElement);
+const ctl=new T.OrbitControls(cam,ren.domElement);ctl.enableDamping=true;ctl.dampingFactor=.08;ctl.autoRotateSpeed=.5;
+{const p=[];for(let i=0;i<1800;i++){const u=Math.random()*2-1,t=Math.random()*2*Math.PI,s=Math.sqrt(1-u*u);p.push(s*Math.cos(t),u,s*Math.sin(t))}
+ const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(p.map(v=>v*9000),3));scene.add(new T.Points(g,new T.PointsMaterial({size:1.5,sizeAttenuation:false,color:0xbfd0ff})))}
+scene.add(new T.HemisphereLight(0xbcd2ff,0x1a1d2b,.75));
+const sun=new T.DirectionalLight(0xfff1dc,1.3);sun.position.set(.6,1,.4);scene.add(sun);
+const rim=new T.DirectionalLight(0x6f9bff,.5);rim.position.set(-.5,.2,-.6);scene.add(rim);
+// Spielkoordinaten sind linkshändig (Unity): z spiegeln. three.js dreht die Flächen bei negativer Determinante selbst um.
+const world=new T.Group();world.scale.z=-1;scene.add(world);
+const box=new T.BoxGeometry(1,1,1),hullMat=new T.MeshStandardMaterial({roughness:.6,metalness:.2});
+// Teiltypen 1 bis 3 sind Schrägen und Ecken; als etwas kleinere Würfel gezeigt.
+const SCALE=[1,.8,.7,.6];
+let data=null,loc=null,sel=null,lastOk=0,ships={},shipObjs={},labels=[];
+const PALETTE=['#FAC775','#9FE1CB','#CECBF6','#F0997B','#9fd4ff','#f6a6c8','#c9e48b','#ffd9a8'];
+const shipColor=id=>PALETTE[Object.keys(ships).indexOf(String(id))%PALETTE.length];
+// ---------- Normalisieren (map.json der Mod oder rohe world.json) ----------
+function normalize(d){
+ if(d.format)return d;
+ return{format:'world.json',worldName:d.worldName||null,generatedUtc:null,worldTime:d.worldTime,spaces:d.spaces,
+  players:(d.players||[]).map(p=>({id:p.id,name:p.name,spaceId:p.spaceId,position:p.position,rotation:p.rotation,health:p.health,oxygen:p.oxygen})),
+  ships:(d.ships||[]).map(s=>{const hull=[];for(const h of s.hullParts||[]){const c=h.FrontColor||{x:217,y:217,z:217};hull.push(h.x,h.y,h.z,h.voxelPartTypeId,(c.x<<16)|(c.y<<8)|c.z)}
+   const b=(s.beaconStates||[]).find(b=>b.name);
+   return{id:s.id,name:b?b.name:null,spaceId:s.spaceId,relativeSpaceId:s.relativeSpaceId,position:s.position,rotation:s.rotation,rooms:(s.rooms||[]).length,
+    parts:(s.statefulFloatingParts||[]).length+(s.statefulHullParts||[]).length,hull}})};
+}
+// ---------- Orte: jede Kette Schiff-in-Schiff endet in einem Wurzelraum ----------
+function index(d){
+ ships={};for(const s of d.ships)ships[s.id]=s;
+ const rel={};for(const r of d.spaces.shipRelativeSpaces||[])rel[r.id]=r.shipId;
+ const desc={};
+ const kinds={planetSurfaceSpaces:s=>'Planet '+s.planetId+', Oberfläche',planetRingSpaces:s=>'Planetenring',orbitSpaces:s=>'Orbit',trajectorySpaces:s=>'Flugbahn',fixedSpaces:s=>'Freier Raum',warpSpaces:s=>'Im Warp'};
+ for(const k in kinds)for(const s of d.spaces[k]||[])desc[s.id]=kinds[k](s);
+ const root=sp=>{let n=0;while(rel[sp]!=null&&ships[rel[sp]]&&n++<64)sp=ships[rel[sp]].spaceId;return sp};
+ const places={};
+ const place=id=>places[id]||(places[id]={id,name:desc[id]||'Raum '+id,ships:[],players:[]});
+ for(const s of d.ships){s.root=root(s.spaceId);s.parent=rel[s.spaceId]??null;place(s.root).ships.push(s)}
+ for(const p of d.players){p.ship=rel[p.spaceId]??null;p.root=root(p.spaceId);place(p.root).players.push(p)}
+ // Gleich benannte Orte durchnummerieren, damit man sie im Menü unterscheiden kann.
+ const list=Object.values(places).filter(p=>p.ships.length||p.players.length);
+ const cnt={};list.forEach(p=>cnt[p.name]=(cnt[p.name]||0)+1);const seen={};
+ list.forEach(p=>{if(cnt[p.name]>1)p.name+=' '+(seen[p.name]=(seen[p.name]||0)+1)});
+ list.forEach(p=>{const big=p.ships.slice().sort((a,b)=>b.hull.length-a.hull.length)[0];if(big&&big.name)p.name=big.name+' · '+p.name});
+ return list.sort((a,b)=>b.players.length-a.players.length||b.ships.length-a.ships.length);
+}
+const shipName=s=>s?(s.name||'Schiff '+s.id):'';
+// ---------- Aufbau ----------
+const v3=p=>new T.Vector3(p?.x||0,p?.y||0,p?.z||0);
+const q4=q=>q?new T.Quaternion(q.x,q.y,q.z,q.w).normalize():new T.Quaternion();
+function shipMatrix(s,depth=0){
+ const m=new T.Matrix4().compose(v3(s.position),q4(s.rotation),new T.Vector3(1,1,1));
+ const p=s.parent!=null&&ships[s.parent];
+ return p&&depth<64?shipMatrix(p,depth+1).multiply(m):m;
+}
+function label(text,color,big){
+ const cv=document.createElement('canvas'),k=cv.getContext('2d'),f=(big?600:500)+' 44px Sora,system-ui,sans-serif';k.font=f;
+ const w=Math.min(1024,Math.ceil(k.measureText(text).width)+56);cv.width=w;cv.height=88;k.font=f;
+ k.fillStyle='rgba(8,12,22,.88)';k.strokeStyle=color;k.lineWidth=5;k.beginPath();k.roundRect?k.roundRect(4,6,w-8,76,38):k.rect(4,6,w-8,76);k.fill();k.stroke();
+ k.fillStyle='#fff';k.textAlign='center';k.textBaseline='middle';k.fillText(text,w/2,46);
+ const tx=new T.CanvasTexture(cv);tx.encoding=T.sRGBEncoding;
+ const sp=new T.Sprite(new T.SpriteMaterial({map:tx,depthTest:false,transparent:true,sizeAttenuation:false}));
+ const h=big?.042:.034;sp.scale.set(h*w/88,h,1);sp.renderOrder=10;sp.center.set(.5,0);labels.push(sp);return sp;
+}
+function clear(){while(world.children.length){const o=world.children.pop();o.traverse(c=>{if(c.isInstancedMesh)c.dispose();if(c.material&&c.material.map)c.material.map.dispose();if(c.isSprite)c.material.dispose()})}labels=[];shipObjs={}}
+const tmpM=new T.Matrix4(),tmpC=new T.Color(),tmpS=new T.Vector3(),tmpQ=new T.Quaternion(),tmpP=new T.Vector3();
+function build(place){
+ clear();if(!place)return;
+ for(const s of place.ships){
+  const g=new T.Group();g.matrixAutoUpdate=false;g.matrix.copy(shipMatrix(s));world.add(g);
+  const n=s.hull.length/5,bb=new T.Box3();
+  if(n){const im=new T.InstancedMesh(box,hullMat,n);
+   for(let i=0;i<n;i++){const o=i*5,sc=SCALE[s.hull[o+3]]||.8;tmpP.set(s.hull[o],s.hull[o+1],s.hull[o+2]);tmpM.compose(tmpP,tmpQ.identity(),tmpS.set(sc,sc,sc));im.setMatrixAt(i,tmpM);
+    im.setColorAt(i,tmpC.setHex(s.hull[o+4]).convertSRGBToLinear());bb.expandByPoint(tmpP)}
+   im.userData.ship=s.id;g.add(im)}
+  else bb.expandByPoint(new T.Vector3());
+  bb.expandByScalar(.6);
+  const c=bb.getCenter(new T.Vector3());
+  const lb=label(shipName(s),shipColor(s.id),true);lb.position.set(c.x,bb.max.y+.6,c.z);g.add(lb);
+  shipObjs[s.id]={g,bb};
+ }
+ world.updateMatrixWorld(true);
+ const mk=new T.MeshStandardMaterial({color:0xffffff,emissive:0x9fd4ff,emissiveIntensity:.8});
+ for(const p of place.players){
+  const s=p.ship!=null&&shipObjs[p.ship];const g=new T.Group();
+  if(s){g.matrixAutoUpdate=false;g.matrix.copy(s.g.matrix)}world.add(g);
+  const body=new T.Mesh(new T.CylinderGeometry(.35,.35,1.7,16),mk);body.position.copy(v3(p.position));g.add(body);
+  const lb=label(p.name,'#9fd4ff',false);lb.position.copy(v3(p.position)).add(new T.Vector3(0,1.3,0));g.add(lb);
+ }
+ labels.forEach(l=>l.visible=$('bLab').getAttribute('aria-pressed')=='true');
+}
+function bounds(id){
+ const b=new T.Box3();world.updateMatrixWorld(true);
+ for(const k in shipObjs)if(id==null||k==id){const o=shipObjs[k];b.union(o.bb.clone().applyMatrix4(o.g.matrixWorld))}
+ return b;
+}
+function focus(id,keepDir){
+ const b=bounds(id);if(b.isEmpty())return;
+ const c=b.getCenter(new T.Vector3()),r=Math.max(8,b.getSize(new T.Vector3()).length()/2);
+ const dir=keepDir?cam.position.clone().sub(ctl.target).normalize():new T.Vector3(.75,.6,.85).normalize();
+ ctl.target.copy(c);cam.position.copy(c).addScaledVector(dir,r*2.2);ctl.maxDistance=r*12;ctl.update();
+}
+// ---------- Listen ----------
+function li(color,name,meta,pressed,onclick){const l=document.createElement('li'),b=document.createElement('button');
+ b.innerHTML='<i></i><span class="t"><span class="n"></span><span class="m"></span></span>';b.querySelector('i').style.background=color;b.querySelector('.n').textContent=name;b.querySelector('.m').textContent=meta;
+ b.setAttribute('aria-pressed',pressed);b.onclick=onclick;l.appendChild(b);return l}
+function lists(place){
+ const su=$('ships'),pu=$('players');su.textContent='';pu.textContent='';
+ if(!place){su.innerHTML='<p class="empty">Keine Daten.</p>';return}
+ const aboard=id=>place.players.filter(p=>p.ship==id).length;
+ for(const s of place.ships.slice().sort((a,b)=>b.hull.length-a.hull.length)){
+  const pl=aboard(s.id),meta=(s.parent!=null?'in '+shipName(ships[s.parent])+' · ':'')+(s.hull.length/5)+' Blöcke'+(pl?' · '+pl+' 👤':'');
+  su.appendChild(li(shipColor(s.id),shipName(s),meta,sel==s.id,()=>{sel=sel==s.id?null:s.id;focus(sel);lists(place)}))}
+ if(!place.players.length)pu.innerHTML='<p class="empty">Hier ist gerade niemand.</p>';
+ for(const p of place.players){const s=ships[p.ship];
+  pu.appendChild(li('#9fd4ff',p.name,(s?shipName(s)+' · ':'')+Math.round(p.health??0)+' ♥',false,()=>{if(s){sel=s.id;focus(s.id);lists(place)}}))}
+}
+// ---------- Laden ----------
+let places=[];
+function show(d,fromFile){
+ data=normalize(d);places=index(data);
+ $('world').textContent=(data.worldName?'Welt „'+data.worldName+'“ · ':'')+data.ships.length+' Schiffe · '+data.players.length+' Spieler';
+ const s=$('loc'),prev=loc;s.textContent='';
+ for(const p of places){const o=document.createElement('option');o.value=p.id;o.textContent=p.name+' ('+p.ships.length+' Schiffe, '+p.players.length+' Spieler)';s.appendChild(o)}
+ const keep=places.find(p=>p.id==prev);loc=(keep||places[0]||{}).id;s.value=loc;
+ const place=places.find(p=>p.id==loc);build(place);lists(place);
+ if(!keep||fromFile)focus(sel&&shipObjs[sel]?sel:null);
+ if(fromFile){stat('Aus Datei geladen','old')}
+}
+function stat(t,c){$('stat').textContent=t;$('dot').className=c||''}
+function age(){if(!data||!data.generatedUtc)return;const s=Math.round((Date.now()-Date.parse(data.generatedUtc))/1000);
+ const t=s<90?'vor '+Math.max(0,s)+' s':s<5400?'vor '+Math.round(s/60)+' min':new Date(data.generatedUtc).toLocaleString('de-DE');
+ stat((s<180?'Live · ':'Letzter Stand · ')+t,s<180?'live':'old')}
+let fileMode=false;
+async function poll(){
+ if(fileMode)return;
+ try{const r=await fetch(SRC+(SRC.includes('?')?'&':'?')+'t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error(r.status);
+  const d=await r.json();if(!data||d.generatedUtc!==data.generatedUtc)show(d);lastOk=Date.now();age()}
+ catch(e){if(!data)stat('Keine Live-Daten. Läuft das Spiel mit der Mod? Du kannst auch eine world.json laden.','err');else stat('Verbindung verloren, zeige letzten Stand','err')}
+}
+$('loc').onchange=e=>{loc=e.target.value;sel=null;const p=places.find(p=>p.id==loc);build(p);lists(p);focus(null)};
+function readFile(f){if(!f)return;const r=new FileReader();r.onload=()=>{try{fileMode=true;sel=null;loc=null;show(JSON.parse(r.result.replace(/^﻿/,'')),true)}catch(e){stat('Datei ist keine gültige world.json','err')}};r.readAsText(f)}
+$('bFile').onclick=()=>$('file').click();$('file').onchange=e=>readFile(e.target.files[0]);
+addEventListener('dragover',e=>{e.preventDefault();document.body.classList.add('dragging')});
+addEventListener('dragleave',e=>{if(!e.relatedTarget)document.body.classList.remove('dragging')});
+addEventListener('drop',e=>{e.preventDefault();document.body.classList.remove('dragging');readFile(e.dataTransfer.files[0])});
+// ---------- Bedienung ----------
+const tg=(id,fn)=>{const b=$(id);b.onclick=()=>{const on=b.getAttribute('aria-pressed')!='true';b.setAttribute('aria-pressed',on);fn(on)}};
+tg('bRot',o=>ctl.autoRotate=o);tg('bLab',o=>labels.forEach(l=>l.visible=o));
+$('bReset').onclick=()=>{sel=null;focus(null);lists(places.find(p=>p.id==loc))};
+const ray=new T.Raycaster(),mp=new T.Vector2();let down=null;const cv=ren.domElement;
+cv.addEventListener('pointerdown',e=>down=[e.clientX,e.clientY]);
+cv.addEventListener('pointerup',e=>{if(!down||Math.hypot(e.clientX-down[0],e.clientY-down[1])>5)return;down=null;
+ const r=cv.getBoundingClientRect();mp.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(mp,cam);
+ const h=ray.intersectObjects(world.children,true).find(h=>h.object.userData.ship!=null);
+ sel=h?h.object.userData.ship:null;if(sel!=null)focus(sel,true);lists(places.find(p=>p.id==loc))});
+function fit(){ren.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}
+addEventListener('resize',fit);fit();
+poll();setInterval(poll,REFRESH);setInterval(age,5000);
+(function tick(){requestAnimationFrame(tick);ctl.update();ren.render(scene,cam)})();
+</script></body></html>
