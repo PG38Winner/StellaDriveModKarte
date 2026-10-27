@@ -4,7 +4,7 @@ Eine MelonLoader-Mod (`mod/StellarMap.cs`) und eine Webseite (`index.html`), die
 
 ## So funktioniert es
 
-1. Die Mod nimmt alle 10 s den Weltzustand des Spiels, also dieselben Daten wie in `world.json`, und schreibt daraus `UserData/StellarMap/map.json`. Steam-IDs werden nicht übernommen.
+1. Die Mod nimmt den Weltzustand des Spiels, also dieselben Daten wie in `world.json`, und schreibt daraus `UserData/StellarMap/map.json`. Steam-IDs werden nicht übernommen. Das passiert nur auf dem Host: alle 10 s, solange die lokale Seite offen ist, sonst nur vor jedem Upload (alle 60 s).
 2. Lokal ist die Karte unter <http://localhost:8787/> erreichbar, solange das Spiel läuft. Der Server ist nur auf diesem PC erreichbar.
 3. Hostet der PC die Welt, pusht die Mod `map.json` alle 60 s in den Branch `live-data` dieses Repos, und zwar immer als einen einzigen Commit, damit der Branch nicht wächst. Die Seite auf GitHub Pages liest die Datei von dort.
 
@@ -39,7 +39,7 @@ Die Einstellungen stehen in `UserData\MelonPreferences.cfg` im Abschnitt `[Stell
 
 | Eintrag | Standard | Bedeutung |
 |---|---|---|
-| `ExportSeconds` | 10 | Abstand zwischen zwei Schnappschüssen |
+| `ExportSeconds` | 10 | Abstand zwischen zwei Schnappschüssen, solange die lokale Seite offen ist |
 | `ServeLocal` / `LocalPort` | true / 8787 | lokale Seite |
 | `PublishWhenHost` | true | als Host nach GitHub pushen (nutzt den gespeicherten git-Login) |
 | `PublishSeconds` | 60 | Abstand zwischen zwei Pushes, mindestens 30 |

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -10,11 +11,10 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using MelonLoader;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.3.0", "paulg")]
+[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.4.0", "paulg")]
 [assembly: MelonGame("CuriousOwlGames", "StellarDrive")]
 
 namespace StellarMap
@@ -59,6 +59,11 @@ namespace StellarMap
         IContractResolver _resolver;
 
         HttpListener _http;
+        long _lastLocalRequest;
+        volatile bool _wantExport;
+        MethodInfo _mGetWorldState, _mConvert;
+        string _worldName;
+        int _snapshots;
 
         public override void OnInitializeMelon()
         {
@@ -106,9 +111,24 @@ namespace StellarMap
             if (url != null) { _openUrl = null; Application.OpenURL(url); }
             var notice = _pendingNotice;
             if (notice != null) { _pendingNotice = null; _notice = notice; _noticeUntil = Time.unscaledTime + 30f; }
+            if (_wantExport) { _wantExport = false; _nextExport = 0f; }
             if (Time.unscaledTime < _nextExport || _busy) return;
-            _nextExport = Time.unscaledTime + Mathf.Max(2f, _exportSeconds.Value);
-            try { Snapshot(); }
+            // Each snapshot makes the game convert its whole world (as for a save), so only take one
+            // when somebody uses it: every ExportSeconds while the local page is open, otherwise at
+            // the publish interval, and not at all on clients (they do not have the world data).
+            _nextExport = Time.unscaledTime + 5f;
+            if (!IsHost())
+            {
+                if (!_loggedNotHost && FindSaver()) { _loggedNotHost = true; Log.Msg("Not the host of this world; the host publishes the map."); }
+                return;
+            }
+            _loggedNotHost = false;
+            bool viewer = DateTime.UtcNow.Ticks - _lastLocalRequest < TimeSpan.TicksPerMinute;
+            bool publish = _publish.Value && !_publishBlocked
+                && (_accessOk || DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond >= _nextAccessCheck);
+            if (!viewer && !publish) return;
+            _nextExport = Time.unscaledTime + (viewer ? Mathf.Max(2f, _exportSeconds.Value) : Mathf.Max(30f, _publishSeconds.Value));
+            try { Snapshot(publish); }
             catch (Exception e) { Fail("Snapshot failed: " + e.Message); }
         }
 
@@ -163,59 +183,67 @@ namespace StellarMap
             }
             if (_fStateProvider == null || _fConverter == null) return false;
             _saver = UnityEngine.Object.FindAnyObjectByType(_saverType);
+            _worldName = null;
             return _saver != null;
         }
 
-        void Snapshot()
+        void Snapshot(bool publish)
         {
             if (!FindSaver()) return;
             var provider = _fStateProvider.GetValue(_saver);
             var converter = _fConverter.GetValue(_saver);
             if (provider == null || converter == null) return;
-            var state = provider.GetType().GetMethod("GetWorldState")?.Invoke(provider, null);
-            if (state == null) return;
-            var serializable = converter.GetType().GetMethod("ConvertToSerializable")?.Invoke(converter, new[] { state });
-            if (serializable == null) return;
+            if (_mGetWorldState == null || _mGetWorldState.ReflectedType != provider.GetType())
+                _mGetWorldState = provider.GetType().GetMethod("GetWorldState", Type.EmptyTypes);
+            if (_mConvert == null || _mConvert.ReflectedType != converter.GetType())
+                _mConvert = converter.GetType().GetMethod("ConvertToSerializable");
+            if (_mGetWorldState == null || _mConvert == null) return;
 
-            string worldName = null;
-            try
+            var clock = Stopwatch.StartNew();
+            var state = _mGetWorldState.Invoke(provider, null);
+            if (state == null) return;
+            var serializable = _mConvert.Invoke(converter, new[] { state });
+            if (serializable == null) return;
+            var mainMs = clock.Elapsed.TotalMilliseconds;
+
+            if (_worldName == null)
             {
-                var file = _fSaveFile?.GetValue(_saver);
-                var info = file?.GetType().GetProperty("SaveFileInfo")?.GetValue(file, null) as FileInfo;
-                worldName = info?.Directory?.Name;
-                // Only known after the first save; until then the newest world folder is the one just loaded.
-                if (worldName == null)
-                    worldName = new DirectoryInfo(Path.Combine(Application.persistentDataPath, "WorldSaves")).GetDirectories()
-                        .OrderByDescending(d => d.LastWriteTimeUtc).FirstOrDefault()?.Name;
+                try
+                {
+                    var file = _fSaveFile?.GetValue(_saver);
+                    var info = file?.GetType().GetProperty("SaveFileInfo")?.GetValue(file, null) as FileInfo;
+                    _worldName = info?.Directory?.Name;
+                    // Only known after the first save; until then the newest world folder is the one just loaded.
+                    if (_worldName == null)
+                        _worldName = new DirectoryInfo(Path.Combine(Application.persistentDataPath, "WorldSaves")).GetDirectories()
+                            .OrderByDescending(d => d.LastWriteTimeUtc).FirstOrDefault()?.Name;
+                }
+                catch { }
             }
-            catch { }
+            var worldName = _worldName;
             var gameVersion = Application.version;
 
             // The serializable world is a snapshot (arrays of values), so turning it into JSON can
             // run off the main thread.
             _busy = true;
             bool names = _includePlayerNames.Value;
-            bool host = IsHost();
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
                 {
-                    var ser = JsonSerializer.Create(new JsonSerializerSettings
-                    {
-                        ContractResolver = _resolver,
-                        ReferenceLoopHandling = ReferenceLoopHandling.Ignore
-                    });
-                    var world = JObject.FromObject(serializable, ser);
-                    var map = MapData.Build(world, worldName, names);
-                    if (map["gameVersion"] == null || map["gameVersion"].Type == JTokenType.Null) map["gameVersion"] = gameVersion;
-                    var json = map.ToString(Formatting.None);
+                    var bg = Stopwatch.StartNew();
+                    var json = MapData.Write(serializable, worldName, gameVersion, names, _resolver);
                     WriteAtomic(_mapFile, json);
                     _lastJson = json;
                     _failCount = 0;
+                    // A line now and then shows what the map costs on this world.
+                    if (_snapshots++ % 60 == 0)
+                        Log.Msg(string.Format("Snapshot: {0:0.0} ms in the game thread, {1:0.0} ms in the background, {2} KB.",
+                            mainMs, bg.Elapsed.TotalMilliseconds, json.Length / 1024));
                 }
                 catch (Exception e) { Fail("Export failed: " + e.Message); }
                 finally { _busy = false; }
-                MaybePublish(host);
+                if (publish) MaybePublish();
             });
         }
 
@@ -249,15 +277,9 @@ namespace StellarMap
             catch { return false; }
         }
 
-        void MaybePublish(bool host)
+        void MaybePublish()
         {
             if (!_publish.Value || _publishing || _publishBlocked) return;
-            if (!host)
-            {
-                if (!_loggedNotHost) { _loggedNotHost = true; Log.Msg("Not the host of this world; the host publishes the map."); }
-                return;
-            }
-            _loggedNotHost = false;
             var json = _lastJson;
             if (json == null || json == _lastPublishedJson) return;
             // Only the time stamp changed? Then there is nothing new to show.
@@ -424,6 +446,13 @@ namespace StellarMap
             if (path == "") path = "index.html";
             string file = path == "map.json" ? _mapFile : Path.GetFullPath(Path.Combine(_wwwDir, path));
             if (path != "map.json" && !file.StartsWith(Path.GetFullPath(_wwwDir), StringComparison.OrdinalIgnoreCase)) file = null;
+            if (path == "map.json")
+            {
+                // The page is open: export at the short interval, and right away if the file is old.
+                _lastLocalRequest = DateTime.UtcNow.Ticks;
+                if (!File.Exists(file) || File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddSeconds(-Math.Max(2f, _exportSeconds.Value) - 1))
+                    _wantExport = true;
+            }
             if (file == null || !File.Exists(file)) { res.StatusCode = 404; return; }
             res.ContentType = file.EndsWith(".json") ? "application/json; charset=utf-8"
                 : file.EndsWith(".html") ? "text/html; charset=utf-8"
@@ -438,76 +467,139 @@ namespace StellarMap
 
     // Strips the save-file world down to the map format. The page understands both this format
     // and a raw world.json, so field names stay the same as in the save file.
-    static class MapData
+    // Reads only the fields the map needs straight from the game's serializable world instead of
+    // turning the whole world (inventories, machine states, cables...) into JSON first.
+    public static class MapData
     {
-        public static JObject Build(JObject world, string worldName, bool names)
+        const BindingFlags Pub = BindingFlags.Public | BindingFlags.Instance;
+        static readonly Dictionary<Type, Dictionary<string, FieldInfo>> Fields = new Dictionary<Type, Dictionary<string, FieldInfo>>();
+
+        static FieldInfo Field(Type t, string name)
         {
-            var map = new JObject
+            lock (Fields)
             {
-                ["format"] = "stellarmap/1",
-                ["worldName"] = worldName,
-                ["generatedUtc"] = DateTime.UtcNow.ToString("o"),
-                ["worldTime"] = world["worldTime"],
-                ["gameVersion"] = world["migrationMetadata"]?["gameVersion"],
-                ["spaces"] = world["spaces"]
-            };
-
-            var players = new JArray();
-            int n = 0;
-            foreach (var p in world["players"] as JArray ?? new JArray())
-            {
-                n++;
-                players.Add(new JObject
-                {
-                    ["id"] = p["id"],
-                    ["name"] = names ? p["name"] : "Spieler " + n,
-                    ["spaceId"] = p["spaceId"],
-                    ["position"] = Vec(p["position"]),
-                    ["rotation"] = Quat(p["rotation"]),
-                    ["health"] = p["health"],
-                    ["oxygen"] = p["oxygen"]
-                });
+                Dictionary<string, FieldInfo> byName;
+                if (!Fields.TryGetValue(t, out byName)) Fields[t] = byName = new Dictionary<string, FieldInfo>();
+                FieldInfo f;
+                if (!byName.TryGetValue(name, out f)) byName[name] = f = t.GetField(name, Pub);
+                return f;
             }
-            map["players"] = players;
-
-            var ships = new JArray();
-            foreach (var s in world["ships"] as JArray ?? new JArray())
-            {
-                // Hull as flat ints: x, y, z, voxel type, colour (0xRRGGBB) per part.
-                var hull = new JArray();
-                foreach (var h in s["hullParts"] as JArray ?? new JArray())
-                {
-                    var c = h["FrontColor"];
-                    int rgb = c == null ? 0xD9D9D9 : ((int)c["x"] << 16) | ((int)c["y"] << 8) | (int)c["z"];
-                    hull.Add((int)h["x"]); hull.Add((int)h["y"]); hull.Add((int)h["z"]);
-                    hull.Add((int)h["voxelPartTypeId"]); hull.Add(rgb);
-                }
-                var parts = 0;
-                foreach (var prop in ((JObject)s).Properties())
-                    if (prop.Name == "statefulFloatingParts" || prop.Name == "statefulHullParts")
-                        parts += (prop.Value as JArray)?.Count ?? 0;
-                // A ship has no name of its own; players name it through its beacon.
-                var beacon = (s["beaconStates"] as JArray)?.Select(b => (string)b["name"]).FirstOrDefault(x => !string.IsNullOrEmpty(x));
-                ships.Add(new JObject
-                {
-                    ["id"] = s["id"],
-                    ["name"] = beacon,
-                    ["spaceId"] = s["spaceId"],
-                    ["relativeSpaceId"] = s["relativeSpaceId"],
-                    ["position"] = Vec(s["position"]),
-                    ["rotation"] = Quat(s["rotation"]),
-                    ["velocity"] = Vec(s["velocity"]),
-                    ["rooms"] = (s["rooms"] as JArray)?.Count ?? 0,
-                    ["parts"] = parts,
-                    ["hull"] = hull
-                });
-            }
-            map["ships"] = ships;
-            return map;
         }
 
-        static JToken Vec(JToken v) => v == null ? null : new JObject { ["x"] = v["x"], ["y"] = v["y"], ["z"] = v["z"] };
-        static JToken Quat(JToken q) => q == null ? null : new JObject { ["x"] = q["x"], ["y"] = q["y"], ["z"] = q["z"], ["w"] = q["w"] };
+        static object Get(object o, string name)
+        {
+            if (o == null) return null;
+            return Field(o.GetType(), name)?.GetValue(o);
+        }
+
+        static IList List(object o, string name) => Get(o, name) as IList;
+
+        public static string Write(object world, string worldName, string fallbackVersion, bool names, IContractResolver resolver)
+        {
+            var sb = new StringBuilder(1 << 16);
+            using (var sw = new StringWriter(sb, System.Globalization.CultureInfo.InvariantCulture))
+            using (var w = new JsonTextWriter(sw))
+            {
+                w.WriteStartObject();
+                w.WritePropertyName("format"); w.WriteValue("stellarmap/1");
+                w.WritePropertyName("worldName"); w.WriteValue(worldName);
+                w.WritePropertyName("generatedUtc"); w.WriteValue(DateTime.UtcNow.ToString("o"));
+                w.WritePropertyName("worldTime"); Value(w, Get(world, "worldTime"));
+                var version = Get(Get(world, "migrationMetadata"), "gameVersion") as string;
+                w.WritePropertyName("gameVersion"); w.WriteValue(string.IsNullOrEmpty(version) ? fallbackVersion : version);
+                // Spaces are small and the page uses most of them, so they go out as the save has them.
+                w.WritePropertyName("spaces");
+                JsonSerializer.Create(new JsonSerializerSettings { ContractResolver = resolver, ReferenceLoopHandling = ReferenceLoopHandling.Ignore })
+                    .Serialize(w, Get(world, "spaces"));
+
+                w.WritePropertyName("players");
+                w.WriteStartArray();
+                int n = 0;
+                foreach (var p in List(world, "players") ?? new object[0])
+                {
+                    n++;
+                    w.WriteStartObject();
+                    w.WritePropertyName("id"); Value(w, Get(p, "id"));
+                    w.WritePropertyName("name"); if (names) Value(w, Get(p, "name")); else w.WriteValue("Spieler " + n);
+                    w.WritePropertyName("spaceId"); Value(w, Get(p, "spaceId"));
+                    w.WritePropertyName("position"); Vec(w, Get(p, "position"), false);
+                    w.WritePropertyName("rotation"); Vec(w, Get(p, "rotation"), true);
+                    w.WritePropertyName("health"); Value(w, Get(p, "health"));
+                    w.WritePropertyName("oxygen"); Value(w, Get(p, "oxygen"));
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+
+                w.WritePropertyName("ships");
+                w.WriteStartArray();
+                foreach (var s in List(world, "ships") ?? new object[0])
+                {
+                    // A ship has no name of its own; players name it through its beacon.
+                    string beacon = null;
+                    foreach (var b in List(s, "beaconStates") ?? new object[0])
+                    {
+                        var name = Get(b, "name") as string;
+                        if (!string.IsNullOrEmpty(name)) { beacon = name; break; }
+                    }
+                    w.WriteStartObject();
+                    w.WritePropertyName("id"); Value(w, Get(s, "id"));
+                    w.WritePropertyName("name"); w.WriteValue(beacon);
+                    w.WritePropertyName("spaceId"); Value(w, Get(s, "spaceId"));
+                    w.WritePropertyName("relativeSpaceId"); Value(w, Get(s, "relativeSpaceId"));
+                    w.WritePropertyName("position"); Vec(w, Get(s, "position"), false);
+                    w.WritePropertyName("rotation"); Vec(w, Get(s, "rotation"), true);
+                    w.WritePropertyName("velocity"); Vec(w, Get(s, "velocity"), false);
+                    w.WritePropertyName("rooms"); w.WriteValue(List(s, "rooms")?.Count ?? 0);
+                    w.WritePropertyName("parts"); w.WriteValue((List(s, "statefulFloatingParts")?.Count ?? 0) + (List(s, "statefulHullParts")?.Count ?? 0));
+                    // Hull as flat ints: x, y, z, voxel type, colour (0xRRGGBB) per part.
+                    w.WritePropertyName("hull");
+                    w.WriteStartArray();
+                    var hull = List(s, "hullParts");
+                    if (hull != null && hull.Count > 0)
+                    {
+                        var t = hull[0].GetType();
+                        FieldInfo fx = Field(t, "x"), fy = Field(t, "y"), fz = Field(t, "z"), fv = Field(t, "voxelPartTypeId"), fc = Field(t, "FrontColor");
+                        FieldInfo cr = null, cg = null, cb = null;
+                        foreach (var h in hull)
+                        {
+                            var c = fc?.GetValue(h);
+                            int rgb = 0xD9D9D9;
+                            if (c != null)
+                            {
+                                if (cr == null) { var ct = c.GetType(); cr = Field(ct, "x"); cg = Field(ct, "y"); cb = Field(ct, "z"); }
+                                rgb = (Int(cr.GetValue(c)) << 16) | (Int(cg.GetValue(c)) << 8) | Int(cb.GetValue(c));
+                            }
+                            w.WriteValue(Int(fx.GetValue(h))); w.WriteValue(Int(fy.GetValue(h))); w.WriteValue(Int(fz.GetValue(h)));
+                            w.WriteValue(Int(fv.GetValue(h))); w.WriteValue(rgb);
+                        }
+                    }
+                    w.WriteEndArray();
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteEndObject();
+            }
+            return sb.ToString();
+        }
+
+        static int Int(object o) => o == null ? 0 : Convert.ToInt32(o, System.Globalization.CultureInfo.InvariantCulture);
+
+        static void Value(JsonWriter w, object v)
+        {
+            if (v == null) w.WriteNull();
+            else w.WriteValue(v);
+        }
+
+        static void Vec(JsonWriter w, object v, bool quat)
+        {
+            if (v == null) { w.WriteNull(); return; }
+            w.WriteStartObject();
+            w.WritePropertyName("x"); Value(w, Get(v, "x"));
+            w.WritePropertyName("y"); Value(w, Get(v, "y"));
+            w.WritePropertyName("z"); Value(w, Get(v, "z"));
+            if (quat) { w.WritePropertyName("w"); Value(w, Get(v, "w")); }
+            w.WriteEndObject();
+        }
 
         public static bool SameContent(string a, string b)
         {
