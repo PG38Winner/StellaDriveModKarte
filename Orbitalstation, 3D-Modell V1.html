@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Orbitalstation, 3D-Modell</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600&display=swap">
+<style>
+:root{color-scheme:dark;--fg:#eaf0ff;--mut:#97a3bf;--card:rgba(10,15,28,.74);--line:rgba(160,182,226,.2);--x:#FAC775;--d:#F0997B;--u:#CECBF6;--o:#9FE1CB;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px);height:100%}
+body{margin:0;height:100%;background:#03050b;color:var(--fg);font:14px/1.45 Sora,system-ui,sans-serif;overflow:hidden}
+#stage{position:fixed;inset:0}#stage canvas{display:block;cursor:grab}
+#side{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:12px;width:min(330px,calc(100vw - 24px));display:flex;flex-direction:column;gap:10px;pointer-events:none}
+.card{background:var(--card);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px;padding:12px 14px;pointer-events:auto}
+h1{font-size:18px;font-weight:600;margin:0 0 2px;letter-spacing:.01em}
+.sub{color:var(--mut);font-size:12.5px;margin:0}
+#rn{font-size:20px;font-weight:600;margin:0}#rt{margin:2px 0 0;color:var(--mut);font-size:12.5px}
+#chips{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px}
+#chips button{font:inherit;font-size:12px;color:var(--fg);background:transparent;border:1px solid var(--line);border-radius:8px;padding:5px 0;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px}
+#chips button i{width:7px;height:7px;border-radius:50%}
+#chips button[aria-pressed=true]{background:rgba(255,255,255,.12);border-color:var(--fg)}
+#bar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;background:var(--card);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px}
+#bar button{font:inherit;font-size:13px;color:var(--mut);background:transparent;border:1px solid transparent;border-radius:9px;padding:7px 12px;cursor:pointer}
+#bar button[aria-pressed=true]{color:var(--fg);background:rgba(255,255,255,.1);border-color:var(--line)}
+button:focus-visible{outline:2px solid var(--x);outline-offset:2px}
+@media(max-width:560px){#chips{grid-template-columns:repeat(6,1fr)}}
+</style></head><body>
+<div id="stage" aria-label="Drehbares 3D-Modell der Orbitalstation mit Ring, zwei Etagen und Kreuz in der Mitte"></div>
+<div id="side">
+ <div class="card"><h1>Orbitalstation</h1><p class="sub">Aus world.json rekonstruiert: Ring mit 49 Blöcken Durchmesser, zwei Etagen, 5 222 Hüllenteile.</p></div>
+ <div class="card" aria-live="polite"><p id="rn">Raum wählen</p><p id="rt">Klicke im Modell auf einen Boden oder wähle unten einen Raum.</p><div id="chips"></div></div>
+</div>
+<div id="bar">
+ <button id="bRot" aria-pressed="true">Drehen</button><button id="bUp" aria-pressed="true">Obere Etage</button><button id="bWall" aria-pressed="true">Trennwände</button><button id="bShell" aria-pressed="false">Hülle geschlossen</button><button id="bLab" aria-pressed="true">Namen</button><button id="bReset">Ansicht zurücksetzen</button>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const T=THREE,PI=Math.PI,$=i=>document.getElementById(i),wrap=$('stage');
+const scene=new T.Scene();scene.background=new T.Color(0x03050b);
+const cam=new T.PerspectiveCamera(38,1,.5,900),home=new T.Vector3(46,40,54);cam.position.copy(home);
+const ren=new T.WebGLRenderer({antialias:true});ren.setPixelRatio(Math.min(devicePixelRatio,2));ren.outputEncoding=T.sRGBEncoding;ren.toneMapping=T.ACESFilmicToneMapping;ren.toneMappingExposure=1.1;ren.shadowMap.enabled=true;ren.shadowMap.type=T.PCFSoftShadowMap;wrap.appendChild(ren.domElement);
+const ctl=new T.OrbitControls(cam,ren.domElement);ctl.target.set(0,3.5,0);ctl.enableDamping=true;ctl.dampingFactor=.07;ctl.autoRotate=!matchMedia('(prefers-reduced-motion:reduce)').matches;ctl.autoRotateSpeed=.6;ctl.minDistance=18;ctl.maxDistance=180;ctl.update();
+if(!ctl.autoRotate)$('bRot').setAttribute('aria-pressed','false');
+// Sterne
+{const p=[];for(let i=0;i<1800;i++){const u=Math.random()*2-1,t=Math.random()*2*PI,s=Math.sqrt(1-u*u);p.push(500*s*Math.cos(t),500*u,500*s*Math.sin(t))}
+const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(p,3));scene.add(new T.Points(g,new T.PointsMaterial({size:1.5,sizeAttenuation:false,color:0xbfd0ff,fog:false})))}
+// Licht
+scene.add(new T.HemisphereLight(0xbcd2ff,0x1a1d2b,.6));
+const sun=new T.DirectionalLight(0xfff1dc,1.6);sun.position.set(60,80,40);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-35,right:35,top:35,bottom:-35,near:10,far:220});sun.shadow.bias=-.0005;scene.add(sun);
+const rim=new T.DirectionalLight(0x6f9bff,.7);rim.position.set(-50,20,-60);scene.add(rim);
+const core=new T.PointLight(0xffc468,1.2,40);core.position.set(0,2,0);scene.add(core);
+// Maße (in Blöcken, aus den Voxeldaten)
+const RI=16.5,RO=24.5,H=3,DK=.4,YU=3.4,RF=7.2,HUB=4,CW=2.5,dA=Math.asin(CW/RI);
+const Da=[PI/2,PI,3*PI/2,2*PI],C={O:0x9FE1CB,U:0xCECBF6,D:0xF0997B,X:0xFAC775};
+const P=(r,a,y)=>[r*Math.cos(a),y,-r*Math.sin(a)];
+const hullM=new T.MeshStandardMaterial({color:0xd9dde3,roughness:.5,metalness:.35,transparent:true,opacity:.3,depthWrite:false});
+const wallM=new T.MeshStandardMaterial({color:0xdfeaff,roughness:.2,transparent:true,opacity:.2,depthWrite:false,side:T.DoubleSide});
+const winM=new T.MeshStandardMaterial({color:0x0b1e33,emissive:0x9fd4ff,emissiveIntensity:1.5});
+const lineM=new T.LineBasicMaterial({color:0x8fa6cc,transparent:true,opacity:.4});
+const st=new T.Group(),lowG=new T.Group(),upG=new T.Group();st.add(lowG,upG);scene.add(st);
+const wl=[],sp=[],pick=[],fm={};
+const fmat=(n,c)=>fm[n]||(fm[n]=new T.MeshStandardMaterial({color:c,roughness:.55,metalness:.1,emissive:c,emissiveIntensity:0}));
+const sec=(r0,r1,a0,a1)=>{const s=new T.Shape();s.absarc(0,0,r1,a0,a1,false);s.absarc(0,0,r0,a1,a0,true);return s};
+const ringS=(r0,r1)=>{const s=new T.Shape(),h=new T.Path();s.absarc(0,0,r1,0,2*PI,false);h.absarc(0,0,r0,0,2*PI,true);s.holes.push(h);return s};
+function ext(s,d,m,y,g,edge){const geo=new T.ExtrudeGeometry(s,{depth:d,bevelEnabled:false,curveSegments:40});geo.rotateX(-PI/2);const o=new T.Mesh(geo,m);o.position.y=y;o.castShadow=o.receiveShadow=true;g.add(o);if(edge){const e=new T.LineSegments(new T.EdgesGeometry(geo,30),lineM);e.position.y=y;g.add(e)}return o}
+function bx(w,h,d,p,m,g,edge,ry=0){const geo=new T.BoxGeometry(w,h,d),o=new T.Mesh(geo,m);o.position.set(...p);o.rotation.y=ry;o.castShadow=o.receiveShadow=true;g.add(o);if(edge){const e=new T.LineSegments(new T.EdgesGeometry(geo),lineM);e.position.copy(o.position);e.rotation.y=ry;g.add(e);o.userData.e=e}return o}
+const W=o=>{wl.push(o);if(o.userData.e)wl.push(o.userData.e)};
+const fl=(o,n)=>{o.userData.room=n;pick.push(o)};
+function lab(t,c,p,g){const cv=document.createElement('canvas');cv.width=256;cv.height=112;const k=cv.getContext('2d');k.fillStyle='rgba(8,12,22,.9)';k.strokeStyle='#'+c.toString(16).padStart(6,'0');k.lineWidth=7;k.beginPath();k.roundRect?k.roundRect(8,12,240,88,44):k.rect(8,12,240,88);k.fill();k.stroke();k.fillStyle='#fff';k.font='600 48px system-ui,sans-serif';k.textAlign='center';k.textBaseline='middle';k.fillText(t,128,58);
+const tx=new T.CanvasTexture(cv);tx.encoding=T.sRGBEncoding;const s=new T.Sprite(new T.SpriteMaterial({map:tx,depthTest:false,transparent:true,toneMapped:false}));s.scale.set(4.2,1.84,1);s.position.set(...p);s.renderOrder=10;g.add(s);sp.push(s)}
+function wins(y,g){const n=64,im=new T.InstancedMesh(new T.BoxGeometry(.14,.8,1.6),winM,n),m=new T.Matrix4(),q=new T.Quaternion();for(let i=0;i<n;i++){const a=i/n*2*PI+PI/n;q.setFromEuler(new T.Euler(0,a,0));m.compose(new T.Vector3(...P(RO+.05,a,y)),q,new T.Vector3(1,1,1));im.setMatrixAt(i,m)}g.add(im)}
+// Ring: untere Etage (U) und obere Etage (O), dazu die D-Stücke auf beiden Etagen
+[[0,lowG,'U'],[YU,upG,'O']].forEach(([y,g,k])=>{const fy=y+DK;
+ for(let i=0;i<4;i++){const lo=Da[i]+dA,hi=Da[i]+PI/2-dA,mid=(lo+hi)/2,n=k+(i+1)+((i+1)%4+1),dn='D0'+(i+1);
+  fl(ext(sec(RI,RO,lo,hi),DK,fmat(n,C[k]),y,g,1),n);
+  fl(ext(sec(RI,RO,Da[i]-dA,Da[i]+dA),DK,fmat(dn,C.D),y,g,1),dn);
+  ext(sec(RI,RI+.3,lo,hi),H,hullM,fy,g);
+  if(k=='O')ext(sec(RI,RI+.3,Da[i]-dA,Da[i]+dA),H,hullM,fy,g);
+  [-dA,dA].forEach(s=>{const a=Da[i]+s;W(bx(RO-RI,H,.25,P((RI+RO)/2,a,fy+H/2),wallM,g,1,a))});
+  lab(n,C[k],P(k=='U'?19.2:21.8,mid,fy+1.2),g)}
+ ext(ringS(RO-.4,RO),k=='U'?YU:RF+DK-YU,hullM,y,g);wins(fy+H/2,g)});
+ext(ringS(RI,RO),DK,hullM,RF,upG);
+for(const [r,c] of [[RO-.45,0x9fd4ff],[RI+.35,0xffc468]])ext(ringS(r,r+.2),.06,new T.MeshStandardMaterial({color:0x111111,emissive:c,emissiveIntensity:1.6}),RF+DK,upG);
+// Kreuz: X01 in der Mitte, vier Gänge nach D01 bis D04
+fl(bx(2*HUB,DK,2*HUB,[0,DK/2,0],fmat('X01',C.X),lowG,1),'X01');
+bx(2*HUB,DK,2*HUB,[0,YU+DK/2,0],hullM,lowG);
+lab('X01',C.X,[0,3.2,0],lowG);
+const cm=new T.Mesh(new T.CylinderGeometry(.9,.9,H,32),new T.MeshStandardMaterial({color:0x2a1b05,emissive:0xffb347,emissiveIntensity:1.4}));cm.position.y=DK+H/2;lowG.add(cm);
+Da.forEach((a,i)=>{const g=new T.Group();g.rotation.y=a;lowG.add(g);const e=RI+.3,L=e-HUB,c=(e+HUB)/2,dn='D0'+(i+1);
+ fl(bx(L,DK,2*CW,[c,DK/2,0],fmat(dn,C.D),g,1),dn);
+ bx(L,DK,2*CW,[c,YU+DK/2,0],hullM,g);
+ [-CW,CW].forEach(z=>W(bx(L,H,.25,[c,DK+H/2,z],wallM,g,1)));
+ [-1,1].forEach(s=>W(bx(.25,H,1.5,[HUB,DK+H/2,s*(CW+.75)],wallM,g,1)));
+ lab(dn,C.D,[c,2.4,0].map((v,j)=>j?v:v),g)});
+// Interaktion
+const info={},names=['X01','D01','D02','D03','D04','U12','U23','U34','U41','O12','O23','O34','O41'];
+names.forEach(n=>{const k=n[0],a=n.slice(1);info[n]=n=='X01'?['X01, Nabe in der Mitte','Untere Etage. Verbindet über die Gänge D01 bis D04 mit dem Ring.']:k=='D'?[n+', Verbindungsgang','Gang von X01 zum Ring, inklusive Ringstück auf beiden Etagen.']:[n+(k=='U'?', unterer Ringabschnitt':', oberer Ringabschnitt'),'Liegt zwischen D0'+a[0]+' und D0'+a[1]+'.']});
+let hov=null,sel=null;const cols={X:'#FAC775',D:'#F0997B',U:'#CECBF6',O:'#9FE1CB'};
+function paint(){for(const n in fm)fm[n].emissiveIntensity=n==sel?.6:n==hov?.3:0;document.querySelectorAll('#chips button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.n==sel))}
+function choose(n){sel=n;$('rn').textContent=n?info[n][0]:'Raum wählen';$('rt').textContent=n?info[n][1]:'Klicke im Modell auf einen Boden oder wähle unten einen Raum.';paint()}
+names.forEach(n=>{const b=document.createElement('button');b.dataset.n=n;b.setAttribute('aria-pressed','false');b.innerHTML='<i style="background:'+cols[n[0]]+'"></i>'+n;b.onclick=()=>choose(sel==n?null:n);$('chips').appendChild(b)});
+const vis=o=>{while(o){if(!o.visible)return false;o=o.parent}return true};
+const ray=new T.Raycaster(),mp=new T.Vector2();
+function at(e){const r=ren.domElement.getBoundingClientRect();mp.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(mp,cam);const h=ray.intersectObjects(pick.filter(vis))[0];return h?h.object.userData.room:null}
+let dn=null;const cv=ren.domElement;
+cv.addEventListener('pointerdown',e=>dn=[e.clientX,e.clientY]);
+cv.addEventListener('pointerup',e=>{if(dn&&Math.hypot(e.clientX-dn[0],e.clientY-dn[1])<5){const n=at(e);choose(n&&n!=sel?n:null)}dn=null});
+cv.addEventListener('pointermove',e=>{if(e.buttons)return;const n=at(e);if(n!=hov){hov=n;cv.style.cursor=n?'pointer':'grab';paint()}});
+const tg=(id,fn)=>{const b=$(id);b.onclick=()=>{const on=b.getAttribute('aria-pressed')!='true';b.setAttribute('aria-pressed',on);fn(on)}};
+tg('bRot',o=>ctl.autoRotate=o);tg('bUp',o=>upG.visible=o);tg('bWall',o=>wl.forEach(m=>m.visible=o));tg('bShell',o=>{hullM.opacity=o?1:.3;hullM.depthWrite=o});tg('bLab',o=>sp.forEach(s=>s.visible=o));
+$('bReset').onclick=()=>{cam.position.copy(home);ctl.target.set(0,3.5,0)};
+function fit(){const w=innerWidth,h=innerHeight;ren.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix()}
+addEventListener('resize',fit);fit();
+(function tick(){requestAnimationFrame(tick);ctl.update();core.intensity=1.1+.2*Math.sin(performance.now()/400);ren.render(scene,cam)})();
+</script></body></html>
