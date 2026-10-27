@@ -4,13 +4,13 @@
 <meta name="description" content="Live-Karte einer StellarDrive-Welt: Schiffe, Stationen und Spieler.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600&display=swap">
 <style>
-:root{color-scheme:dark;--fg:#eaf0ff;--mut:#97a3bf;--card:rgba(10,15,28,.78);--line:rgba(160,182,226,.2);--acc:#FAC775;--ok:#9FE1CB;--bad:#F0997B;box-sizing:border-box}
+:root{color-scheme:dark;--fg:#eaf0ff;--mut:#97a3bf;--card:rgba(10,15,28,.92);--line:rgba(160,182,226,.2);--acc:#FAC775;--ok:#9FE1CB;--bad:#F0997B;box-sizing:border-box}
 *{box-sizing:inherit}
 html,body{height:100%}
 body{margin:0;background:#03050b;color:var(--fg);font:14px/1.45 Sora,system-ui,sans-serif;overflow:hidden}
 #stage{position:fixed;inset:0}#stage canvas{display:block;cursor:grab}
 #side{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:12px;width:min(340px,calc(100vw - 24px));max-height:calc(100% - 96px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:10px;pointer-events:none}
-.card{background:var(--card);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px;padding:12px 14px;pointer-events:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;pointer-events:auto}
 #lists{overflow-y:auto;overflow-x:hidden;min-height:0}
 h1{font-size:18px;font-weight:600;margin:0 0 2px}
 h2{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:12px 0 6px}
@@ -32,7 +32,7 @@ li .n,li .m{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 li .m{color:var(--mut);font-size:12px;font-variant-numeric:tabular-nums}
 li i{width:9px;height:9px;border-radius:3px;flex:none;align-self:flex-start;margin-top:6px}
 .empty{color:var(--mut);font-size:12.5px;margin:0}
-#bar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;background:var(--card);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px}
+#bar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;background:var(--card);border:1px solid var(--line);border-radius:14px}
 #bar button,#bar a{font:inherit;font-size:13px;color:var(--mut);background:transparent;border:1px solid transparent;border-radius:9px;padding:7px 12px;cursor:pointer;text-decoration:none}
 #bar button[aria-pressed=true]{color:var(--fg);background:rgba(255,255,255,.1);border-color:var(--line)}
 #bar button:hover,#bar a:hover{color:var(--fg)}
@@ -73,8 +73,10 @@ const REFRESH=location.hostname.endsWith('.github.io')?30000:10000;
 // ---------- Szene ----------
 const scene=new T.Scene();scene.background=new T.Color(0x03050b);
 const cam=new T.PerspectiveCamera(45,1,.3,20000);cam.position.set(60,50,70);
-const ren=new T.WebGLRenderer({antialias:true});ren.setPixelRatio(Math.min(devicePixelRatio,2));ren.outputEncoding=T.sRGBEncoding;$('stage').appendChild(ren.domElement);
+const ren=new T.WebGLRenderer({antialias:devicePixelRatio<1.5,powerPreference:'high-performance'});ren.setPixelRatio(Math.min(devicePixelRatio,1.5));ren.outputEncoding=T.sRGBEncoding;$('stage').appendChild(ren.domElement);
 const ctl=new T.OrbitControls(cam,ren.domElement);ctl.enableDamping=true;ctl.dampingFactor=.08;ctl.autoRotateSpeed=.5;
+// Nur rendern, wenn sich etwas geändert hat; ein stillstehendes Bild kostet so nichts.
+let dirty=true;const redraw=()=>dirty=true;ctl.addEventListener('change',redraw);
 {const p=[];for(let i=0;i<1800;i++){const u=Math.random()*2-1,t=Math.random()*2*Math.PI,s=Math.sqrt(1-u*u);p.push(s*Math.cos(t),u,s*Math.sin(t))}
  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(p.map(v=>v*9000),3));scene.add(new T.Points(g,new T.PointsMaterial({size:1.5,sizeAttenuation:false,color:0xbfd0ff})))}
 scene.add(new T.HemisphereLight(0xbcd2ff,0x1a1d2b,.75));
@@ -85,7 +87,7 @@ const world=new T.Group();world.scale.z=-1;scene.add(world);
 const box=new T.BoxGeometry(1,1,1),hullMat=new T.MeshStandardMaterial({roughness:.6,metalness:.2});
 // Teiltypen 1 bis 3 sind Schrägen und Ecken; als etwas kleinere Würfel gezeigt.
 const SCALE=[1,.8,.7,.6];
-let data=null,loc=null,sel=null,lastOk=0,ships={},shipObjs={},labels=[];
+let data=null,loc=null,sel=null,lastOk=0,ships={},shipObjs={},labels=[],labelsOn=true;
 const PALETTE=['#FAC775','#9FE1CB','#CECBF6','#F0997B','#9fd4ff','#f6a6c8','#c9e48b','#ffd9a8'];
 const shipColor=id=>PALETTE[Object.keys(ships).indexOf(String(id))%PALETTE.length];
 // ---------- Normalisieren (map.json der Mod oder rohe world.json) ----------
@@ -126,41 +128,54 @@ function shipMatrix(s,depth=0){
  const p=s.parent!=null&&ships[s.parent];
  return p&&depth<64?shipMatrix(p,depth+1).multiply(m):m;
 }
+// Namensschilder: eine Textur je Text und Farbe, die alle Schilder mit demselben Text teilen.
+const labelMats=new Map();
 function label(text,color,big){
- const cv=document.createElement('canvas'),k=cv.getContext('2d'),f=(big?600:500)+' 44px Sora,system-ui,sans-serif';k.font=f;
- const w=Math.min(1024,Math.ceil(k.measureText(text).width)+56);cv.width=w;cv.height=88;k.font=f;
- k.fillStyle='rgba(8,12,22,.88)';k.strokeStyle=color;k.lineWidth=5;k.beginPath();k.roundRect?k.roundRect(4,6,w-8,76,38):k.rect(4,6,w-8,76);k.fill();k.stroke();
- k.fillStyle='#fff';k.textAlign='center';k.textBaseline='middle';k.fillText(text,w/2,46);
- const tx=new T.CanvasTexture(cv);tx.encoding=T.sRGBEncoding;
- const sp=new T.Sprite(new T.SpriteMaterial({map:tx,depthTest:false,transparent:true,sizeAttenuation:false}));
- const h=big?.042:.034;sp.scale.set(h*w/88,h,1);sp.renderOrder=10;sp.center.set(.5,0);labels.push(sp);return sp;
+ const key=text+'|'+color+'|'+big;let e=labelMats.get(key);
+ if(!e){const cv=document.createElement('canvas'),k=cv.getContext('2d'),f=(big?600:500)+' 44px Sora,system-ui,sans-serif';k.font=f;
+  const w=Math.min(1024,Math.ceil(k.measureText(text).width)+56);cv.width=w;cv.height=88;k.font=f;
+  k.fillStyle='rgba(8,12,22,.88)';k.strokeStyle=color;k.lineWidth=5;k.beginPath();k.roundRect?k.roundRect(4,6,w-8,76,38):k.rect(4,6,w-8,76);k.fill();k.stroke();
+  k.fillStyle='#fff';k.textAlign='center';k.textBaseline='middle';k.fillText(text,w/2,46);
+  const tx=new T.CanvasTexture(cv);tx.encoding=T.sRGBEncoding;
+  e={w,mat:new T.SpriteMaterial({map:tx,depthTest:false,transparent:true,sizeAttenuation:false})};labelMats.set(key,e)}
+ const sp=new T.Sprite(e.mat),h=big?.042:.034;sp.scale.set(h*e.w/88,h,1);sp.renderOrder=10;sp.center.set(.5,0);sp.visible=labelsOn;labels.push(sp);return sp;
 }
-function clear(){while(world.children.length){const o=world.children.pop();o.traverse(c=>{if(c.isInstancedMesh)c.dispose();if(c.material&&c.material.map)c.material.map.dispose();if(c.isSprite)c.material.dispose()})}labels=[];shipObjs={}}
+// Schiffe bleiben zwischen zwei Updates erhalten: Ändert sich nur die Lage, wird nur die Matrix gesetzt.
+// Neu gebaut wird ein Schiff nur, wenn sich seine Hülle oder sein Name ändert.
+function hullSig(h){let x=h.length;for(let i=0;i<h.length;i++)x=(Math.imul(x,31)+h[i])|0;return x}
+function dropShip(id){const o=shipObjs[id];if(!o)return;world.remove(o.g);if(o.im)o.im.dispose();labels=labels.filter(l=>l!==o.lb);delete shipObjs[id]}
 const tmpM=new T.Matrix4(),tmpC=new T.Color(),tmpS=new T.Vector3(),tmpQ=new T.Quaternion(),tmpP=new T.Vector3();
+function makeShip(s,sig){
+ const g=new T.Group();g.matrixAutoUpdate=false;world.add(g);
+ const n=s.hull.length/5,bb=new T.Box3();let im=null;
+ if(n){im=new T.InstancedMesh(box,hullMat,n);
+  for(let i=0;i<n;i++){const o=i*5,sc=SCALE[s.hull[o+3]]||.8;tmpP.set(s.hull[o],s.hull[o+1],s.hull[o+2]);tmpM.compose(tmpP,tmpQ.identity(),tmpS.set(sc,sc,sc));im.setMatrixAt(i,tmpM);
+   im.setColorAt(i,tmpC.setHex(s.hull[o+4]).convertSRGBToLinear());bb.expandByPoint(tmpP)}
+  im.userData.ship=s.id;g.add(im)}
+ else bb.expandByPoint(new T.Vector3());
+ bb.expandByScalar(.6);
+ const c=bb.getCenter(new T.Vector3()),lb=label(shipName(s),shipColor(s.id),true);lb.position.set(c.x,bb.max.y+.6,c.z);g.add(lb);
+ return{g,bb,im,lb,sig};
+}
+const playerGeo=new T.CylinderGeometry(.35,.35,1.7,12),playerMat=new T.MeshStandardMaterial({color:0xffffff,emissive:0x9fd4ff,emissiveIntensity:.8});
+const playersG=new T.Group();world.add(playersG);
 function build(place){
- clear();if(!place)return;
- for(const s of place.ships){
-  const g=new T.Group();g.matrixAutoUpdate=false;g.matrix.copy(shipMatrix(s));world.add(g);
-  const n=s.hull.length/5,bb=new T.Box3();
-  if(n){const im=new T.InstancedMesh(box,hullMat,n);
-   for(let i=0;i<n;i++){const o=i*5,sc=SCALE[s.hull[o+3]]||.8;tmpP.set(s.hull[o],s.hull[o+1],s.hull[o+2]);tmpM.compose(tmpP,tmpQ.identity(),tmpS.set(sc,sc,sc));im.setMatrixAt(i,tmpM);
-    im.setColorAt(i,tmpC.setHex(s.hull[o+4]).convertSRGBToLinear());bb.expandByPoint(tmpP)}
-   im.userData.ship=s.id;g.add(im)}
-  else bb.expandByPoint(new T.Vector3());
-  bb.expandByScalar(.6);
-  const c=bb.getCenter(new T.Vector3());
-  const lb=label(shipName(s),shipColor(s.id),true);lb.position.set(c.x,bb.max.y+.6,c.z);g.add(lb);
-  shipObjs[s.id]={g,bb};
+ const keep=new Set(place?place.ships.map(s=>String(s.id)):[]);
+ for(const id of Object.keys(shipObjs))if(!keep.has(id))dropShip(id);
+ for(const s of place?place.ships:[]){
+  const sig=hullSig(s.hull)+'|'+shipName(s)+'|'+shipColor(s.id);
+  if(!shipObjs[s.id]||shipObjs[s.id].sig!==sig){dropShip(String(s.id));shipObjs[s.id]=makeShip(s,sig)}
+  const g=shipObjs[s.id].g;g.matrix.copy(shipMatrix(s));g.matrixWorldNeedsUpdate=true;
  }
- world.updateMatrixWorld(true);
- const mk=new T.MeshStandardMaterial({color:0xffffff,emissive:0x9fd4ff,emissiveIntensity:.8});
- for(const p of place.players){
+ labels=labels.filter(l=>l.parent!==playersG&&!(l.parent&&l.parent.parent===playersG));
+ playersG.clear();
+ for(const p of place?place.players:[]){
   const s=p.ship!=null&&shipObjs[p.ship];const g=new T.Group();
-  if(s){g.matrixAutoUpdate=false;g.matrix.copy(s.g.matrix)}world.add(g);
-  const body=new T.Mesh(new T.CylinderGeometry(.35,.35,1.7,16),mk);body.position.copy(v3(p.position));g.add(body);
-  const lb=label(p.name,'#9fd4ff',false);lb.position.copy(v3(p.position)).add(new T.Vector3(0,1.3,0));g.add(lb);
+  if(s){g.matrixAutoUpdate=false;g.matrix.copy(s.g.matrix)}playersG.add(g);
+  const body=new T.Mesh(playerGeo,playerMat);body.position.copy(v3(p.position));g.add(body);
+  const lb=label(p.name||'Spieler','#9fd4ff',false);lb.position.copy(v3(p.position)).add(new T.Vector3(0,1.3,0));g.add(lb);
  }
- labels.forEach(l=>l.visible=$('bLab').getAttribute('aria-pressed')=='true');
+ world.updateMatrixWorld(true);redraw();
 }
 function bounds(id){
  const b=new T.Box3();world.updateMatrixWorld(true);
@@ -219,7 +234,7 @@ addEventListener('dragleave',e=>{if(!e.relatedTarget)document.body.classList.rem
 addEventListener('drop',e=>{e.preventDefault();document.body.classList.remove('dragging');readFile(e.dataTransfer.files[0])});
 // ---------- Bedienung ----------
 const tg=(id,fn)=>{const b=$(id);b.onclick=()=>{const on=b.getAttribute('aria-pressed')!='true';b.setAttribute('aria-pressed',on);fn(on)}};
-tg('bRot',o=>ctl.autoRotate=o);tg('bLab',o=>labels.forEach(l=>l.visible=o));
+tg('bRot',o=>ctl.autoRotate=o);tg('bLab',o=>{labelsOn=o;labels.forEach(l=>l.visible=o);redraw()});
 $('bReset').onclick=()=>{sel=null;focus(null);lists(places.find(p=>p.id==loc))};
 const ray=new T.Raycaster(),mp=new T.Vector2();let down=null;const cv=ren.domElement;
 cv.addEventListener('pointerdown',e=>down=[e.clientX,e.clientY]);
@@ -227,8 +242,11 @@ cv.addEventListener('pointerup',e=>{if(!down||Math.hypot(e.clientX-down[0],e.cli
  const r=cv.getBoundingClientRect();mp.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(mp,cam);
  const h=ray.intersectObjects(world.children,true).find(h=>h.object.userData.ship!=null);
  sel=h?h.object.userData.ship:null;if(sel!=null)focus(sel,true);lists(places.find(p=>p.id==loc))});
-function fit(){ren.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}
+function fit(){ren.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();redraw()}
 addEventListener('resize',fit);fit();
-poll();setInterval(poll,REFRESH);setInterval(age,5000);
-(function tick(){requestAnimationFrame(tick);ctl.update();ren.render(scene,cam)})();
+// Im Hintergrund-Tab weder laden noch rendern; beim Zurückkommen sofort aktualisieren.
+poll();setInterval(()=>{if(!document.hidden)poll()},REFRESH);setInterval(()=>{if(!document.hidden)age()},5000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){poll();redraw()}});
+// ctl.update() ist billig und meldet über 'change', ob sich die Kamera bewegt hat (Dämpfung, Drehen).
+(function tick(){requestAnimationFrame(tick);if(document.hidden)return;ctl.update();if(dirty){dirty=false;ren.render(scene,cam)}})();
 </script></body></html>
