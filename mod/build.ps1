@@ -12,7 +12,8 @@ if (-not $csc) { throw "Roslyn csc.exe not found (install Visual Studio Build To
 $managed = Join-Path $Game "StellarDrive_Data\Managed"
 $refs = @(
     "$managed\mscorlib.dll", "$managed\netstandard.dll", "$managed\System.dll", "$managed\System.Core.dll",
-    "$managed\UnityEngine.dll", "$managed\UnityEngine.CoreModule.dll", "$managed\Newtonsoft.Json.dll",
+    "$managed\UnityEngine.dll", "$managed\UnityEngine.CoreModule.dll", "$managed\UnityEngine.IMGUIModule.dll",
+    "$managed\UnityEngine.TextRenderingModule.dll", "$managed\Newtonsoft.Json.dll",
     (Join-Path $Game "MelonLoader\net35\MelonLoader.dll")
 ) | ForEach-Object { "-r:$_" }
 

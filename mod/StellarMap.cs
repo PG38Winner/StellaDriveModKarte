@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using MelonLoader;
 using Newtonsoft.Json;
@@ -13,7 +14,7 @@ using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.2.0", "paulg")]
+[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.3.0", "paulg")]
 [assembly: MelonGame("CuriousOwlGames", "StellarDrive")]
 
 namespace StellarMap
@@ -44,6 +45,12 @@ namespace StellarMap
         string _lastPublishedJson;
         int _failCount;
         volatile bool _publishBlocked;
+        volatile bool _accessOk;
+        long _nextAccessCheck;
+        bool _loginOpened, _inviteOpened;
+        volatile string _openUrl, _pendingNotice;
+        string _notice;
+        float _noticeUntil;
 
         // Game objects, found by name so the mod does not break when a type moves between versions.
         UnityEngine.Object _saver;
@@ -94,11 +101,42 @@ namespace StellarMap
 
         public override void OnUpdate()
         {
+            // Unity calls from the publish thread are handed over to the main thread here.
+            var url = _openUrl;
+            if (url != null) { _openUrl = null; Application.OpenURL(url); }
+            var notice = _pendingNotice;
+            if (notice != null) { _pendingNotice = null; _notice = notice; _noticeUntil = Time.unscaledTime + 30f; }
             if (Time.unscaledTime < _nextExport || _busy) return;
             _nextExport = Time.unscaledTime + Mathf.Max(2f, _exportSeconds.Value);
             try { Snapshot(); }
             catch (Exception e) { Fail("Snapshot failed: " + e.Message); }
         }
+
+        GUIStyle _noticeStyle;
+
+        public override void OnGUI()
+        {
+            if (_notice == null || Time.unscaledTime > _noticeUntil) return;
+            if (_noticeStyle == null)
+            {
+                var bg = new Texture2D(1, 1);
+                bg.SetPixel(0, 0, new Color(0.04f, 0.06f, 0.11f, 0.94f));
+                bg.Apply();
+                _noticeStyle = new GUIStyle(GUI.skin.box) { wordWrap = true, alignment = TextAnchor.MiddleCenter };
+                _noticeStyle.normal.background = bg;
+                _noticeStyle.normal.textColor = Color.white;
+            }
+            // Scale with the screen so the text stays readable at 1440p and 4K.
+            float k = Mathf.Max(1f, Screen.height / 1080f);
+            _noticeStyle.fontSize = Mathf.RoundToInt(22 * k);
+            _noticeStyle.padding = new RectOffset((int)(20 * k), (int)(20 * k), (int)(14 * k), (int)(14 * k));
+            float w = Mathf.Min(900f * k, Screen.width - 40f);
+            float h = _noticeStyle.CalcHeight(new GUIContent(_notice), w);
+            GUI.Box(new Rect((Screen.width - w) / 2f, 30f * k, w, h), _notice, _noticeStyle);
+        }
+
+        // Shown in game: the host sits in a fullscreen game and would not see a log line.
+        void Notice(string text) { _pendingNotice = text; Log.Msg(text); }
 
         void Fail(string msg)
         {
@@ -225,6 +263,7 @@ namespace StellarMap
             // Only the time stamp changed? Then there is nothing new to show.
             if (_lastPublishedJson != null && MapData.SameContent(json, _lastPublishedJson)) return;
             var now = DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
+            if (!_accessOk && now < _nextAccessCheck) return;
             if (now < _nextPublish) return;
             _nextPublish = now + (long)Math.Max(30f, _publishSeconds.Value);
             _publishing = true;
@@ -246,19 +285,24 @@ namespace StellarMap
                 Git("-c user.name=StellarMap -c user.email=stellarmap@users.noreply.github.com "
                     + (hasHead ? "commit -q --amend --reset-author" : "commit -q") + " -m \"Live-Karte aktualisiert\"");
                 string err;
+                // Before the first upload: is this PC logged in to GitHub and allowed to push?
+                if (!_accessOk)
+                {
+                    if (Git("push -q --dry-run -f origin HEAD:refs/heads/" + _branch.Value, out err, ignoreErrors: true) != 0)
+                    {
+                        NoAccess(err, now);
+                        return;
+                    }
+                    _accessOk = true;
+                    if (_loginOpened || _inviteOpened) Notice("Live-Karte: GitHub-Zugang klappt, die Karte wird jetzt hochgeladen.");
+                    else Log.Msg("GitHub access OK.");
+                }
                 if (Git("push -q -f origin HEAD:refs/heads/" + _branch.Value, out err, ignoreErrors: true) == 0)
                 {
                     _lastPublishedJson = json;
                     Log.Msg("Map published to GitHub.");
                 }
-                else if (IsAuthError(err))
-                {
-                    // Not a collaborator or not logged in: retrying every minute would not help.
-                    _publishBlocked = true;
-                    Log.Warning("Map not published: no write access to " + _repoUrl.Value + " (" + err.Trim() + "). "
-                        + "Ask the repository owner to add your GitHub account as collaborator, then log in once with "
-                        + "\"git credential-manager github login\" and restart the game.");
-                }
+                else if (IsLoginError(err) || IsNoAccessError(err)) { _accessOk = false; NoAccess(err, now); }
                 else Fail("git push -> " + err.Trim());
             }
             catch (System.ComponentModel.Win32Exception)
@@ -270,16 +314,52 @@ namespace StellarMap
             finally { _publishing = false; }
         }
 
-        static bool IsAuthError(string err)
+        // Called on the publish thread. Each page opens at most once per game session; after that
+        // the check just runs again every two minutes, so accepting an invitation needs no restart.
+        void NoAccess(string err, long now)
+        {
+            _nextAccessCheck = now + 120;
+            var repo = Regex.Replace(_repoUrl.Value, @"\.git$", "");
+            if (IsNoAccessError(err))
+            {
+                if (_inviteOpened) return;
+                _inviteOpened = true;
+                var user = Regex.Match(err, @"denied to ([^\s.]+)").Groups[1].Value;
+                Log.Warning("No write access to " + repo + ": " + err.Trim());
+                Notice("Live-Karte: Das GitHub-Konto " + (user == "" ? "" : user + " ") + "darf die Karte nicht hochladen. "
+                    + "Der Besitzer muss dich als Mitarbeiter einladen. Die Einladung kannst du auf der eben geöffneten Seite annehmen.");
+                _openUrl = repo + "/invitations";
+            }
+            else if (IsLoginError(err))
+            {
+                if (_loginOpened) return;
+                _loginOpened = true;
+                Notice("Live-Karte: Du hostest, bist aber nicht bei GitHub angemeldet. "
+                    + "Melde dich im GitHub-Fenster an, das gerade aufgegangen ist (Alt+Tab).");
+                // Git Credential Manager shows its own sign-in window (browser, code or token).
+                int code = Git("credential-manager github login", out err, ignoreErrors: true, interactive: true, timeoutMs: 15 * 60000);
+                if (code == 0) _nextAccessCheck = 0;
+                else Notice("Live-Karte: GitHub-Anmeldung abgebrochen. Ohne Anmeldung wird die Karte nicht hochgeladen.");
+            }
+            else Fail("git push --dry-run -> " + err.Trim());
+        }
+
+        static bool IsNoAccessError(string err)
         {
             var e = err.ToLowerInvariant();
-            return e.Contains("403") || e.Contains("permission") || e.Contains("denied") || e.Contains("authentication")
-                || e.Contains("could not read username") || e.Contains("terminal prompts disabled");
+            return e.Contains("403") || e.Contains("denied to");
+        }
+
+        static bool IsLoginError(string err)
+        {
+            var e = err.ToLowerInvariant();
+            return e.Contains("could not read username") || e.Contains("could not read password")
+                || e.Contains("terminal prompts disabled") || e.Contains("authentication failed") || e.Contains("401");
         }
 
         int Git(string args, bool ignoreErrors = false) => Git(args, out _, ignoreErrors);
 
-        int Git(string args, out string err, bool ignoreErrors = false)
+        int Git(string args, out string err, bool ignoreErrors = false, bool interactive = false, int timeoutMs = 60000)
         {
             var psi = new ProcessStartInfo(_gitPath.Value, args)
             {
@@ -289,14 +369,20 @@ namespace StellarMap
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            // Never wait for a login prompt that nobody can see.
+            // Never wait for a login prompt that nobody can see; only the explicit login may show a window.
             psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
-            psi.EnvironmentVariables["GCM_INTERACTIVE"] = "never";
+            if (!interactive) psi.EnvironmentVariables["GCM_INTERACTIVE"] = "never";
             using (var p = Process.Start(psi))
             {
-                err = p.StandardError.ReadToEnd();
-                p.StandardOutput.ReadToEnd();
-                if (!p.WaitForExit(60000)) { try { p.Kill(); } catch { } throw new Exception("git " + args + " timed out"); }
+                // Read in the background so the timeout also applies to a login window left open.
+                var errText = new StringBuilder();
+                p.ErrorDataReceived += (s, e) => { if (e.Data != null) lock (errText) errText.AppendLine(e.Data); };
+                p.OutputDataReceived += (s, e) => { };
+                p.BeginErrorReadLine();
+                p.BeginOutputReadLine();
+                if (!p.WaitForExit(timeoutMs)) { try { p.Kill(); } catch { } throw new Exception("git " + args + " timed out"); }
+                p.WaitForExit();
+                lock (errText) err = errText.ToString();
                 if (p.ExitCode != 0 && !ignoreErrors) Fail("git " + args + " -> " + err.Trim());
                 return p.ExitCode;
             }
