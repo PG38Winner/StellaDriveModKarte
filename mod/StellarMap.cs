@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -13,7 +13,7 @@ using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.1.0", "paulg")]
+[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.2.0", "paulg")]
 [assembly: MelonGame("CuriousOwlGames", "StellarDrive")]
 
 namespace StellarMap
@@ -150,6 +150,7 @@ namespace StellarMap
             }
             catch { }
             var gameVersion = Application.version;
+            var hullTypes = HullTypes();
 
             // The serializable world is a snapshot (arrays of values), so turning it into JSON can
             // run off the main thread.
@@ -168,6 +169,7 @@ namespace StellarMap
                     var world = JObject.FromObject(serializable, ser);
                     var map = MapData.Build(world, worldName, names);
                     if (map["gameVersion"] == null || map["gameVersion"].Type == JTokenType.Null) map["gameVersion"] = gameVersion;
+                    if (hullTypes != null) map["hullTypes"] = hullTypes;
                     var json = map.ToString(Formatting.None);
                     WriteAtomic(_mapFile, json);
                     _lastJson = json;
@@ -177,6 +179,56 @@ namespace StellarMap
                 finally { _busy = false; }
                 MaybePublish(host);
             });
+        }
+
+        JObject _hullTypes;
+
+        // Which hull part id is metal, glass or wood (and flat or a corner piece). The save file only
+        // stores the id; the rest lives in the game's part settings, so it is read once from them.
+        JObject HullTypes()
+        {
+            if (_hullTypes != null) return _hullTypes;
+            try
+            {
+                var settingsType = AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(a => a.GetType("Ships.Interface.Settings.HullPartSettings", false)).FirstOrDefault(t => t != null);
+                if (settingsType == null) return null;
+                const BindingFlags bf = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.FlattenHierarchy;
+                FieldInfo Find(Type t, string name)
+                {
+                    for (; t != null; t = t.BaseType) { var f = t.GetField(name, bf); if (f != null) return f; }
+                    return null;
+                }
+                var fId = Find(settingsType, "id");
+                var fMat = Find(settingsType, "hullMaterialType");
+                var fSeg = Find(settingsType, "hullMeshSegmentType");
+                var fLabel = Find(settingsType, "fullLabel");
+                var types = new JObject();
+                foreach (var s in Resources.FindObjectsOfTypeAll(settingsType))
+                {
+                    var id = Convert.ToInt32(fId.GetValue(s));
+                    types[id.ToString()] = new JObject
+                    {
+                        ["mat"] = fMat?.GetValue(s)?.ToString(),
+                        ["seg"] = fSeg?.GetValue(s)?.ToString(),
+                        ["label"] = fLabel?.GetValue(s) as string
+                    };
+                }
+                if (types.Count == 0) return null;   // settings not loaded yet, try again next snapshot
+                _hullTypes = types;
+
+                // Where each plate type sits inside its voxel, straight from the game.
+                var helper = AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(a => a.GetType("Ships.Interface.Services.PartPositionHelper", false)).FirstOrDefault(t => t != null);
+                var offset = helper?.GetMethod("GetVoxelOffset", BindingFlags.Public | BindingFlags.Static);
+                var enumType = offset?.GetParameters()[0].ParameterType;
+                if (offset != null)
+                    foreach (var v in Enum.GetValues(enumType))
+                        Log.Msg("Voxel offset " + v + " (" + Convert.ToInt32(v) + "): " + offset.Invoke(null, new[] { v }));
+                Log.Msg("Hull part types: " + types.ToString(Formatting.None));
+            }
+            catch (Exception e) { Fail("Hull types not read: " + e.Message); }
+            return _hullTypes;
         }
 
         static void WriteAtomic(string path, string text)
@@ -326,11 +378,14 @@ namespace StellarMap
     // and a raw world.json, so field names stay the same as in the save file.
     static class MapData
     {
+        public const int HullStride = 7;
+
         public static JObject Build(JObject world, string worldName, bool names)
         {
             var map = new JObject
             {
-                ["format"] = "stellarmap/1",
+                ["format"] = "stellarmap/2",
+                ["hullStride"] = HullStride,
                 ["worldName"] = worldName,
                 ["generatedUtc"] = DateTime.UtcNow.ToString("o"),
                 ["worldTime"] = world["worldTime"],
@@ -359,7 +414,8 @@ namespace StellarMap
             var ships = new JArray();
             foreach (var s in world["ships"] as JArray ?? new JArray())
             {
-                // Hull as flat ints: x, y, z, voxel type, colour (0xRRGGBB) per part.
+                // Hull as flat ints, HullStride per part: x, y, z, voxel type (floor, forward wall,
+                // right wall, interior), colour 0xRRGGBB, part id, forward orientation * 32 + up orientation.
                 var hull = new JArray();
                 foreach (var h in s["hullParts"] as JArray ?? new JArray())
                 {
@@ -367,6 +423,7 @@ namespace StellarMap
                     int rgb = c == null ? 0xD9D9D9 : ((int)c["x"] << 16) | ((int)c["y"] << 8) | (int)c["z"];
                     hull.Add((int)h["x"]); hull.Add((int)h["y"]); hull.Add((int)h["z"]);
                     hull.Add((int)h["voxelPartTypeId"]); hull.Add(rgb);
+                    hull.Add((int)h["partId"]); hull.Add((int)h["forwardOrientationId"] * 32 + (int)h["upOrientationId"]);
                 }
                 var parts = 0;
                 foreach (var prop in ((JObject)s).Properties())
