@@ -75,8 +75,9 @@ const scene=new T.Scene();scene.background=new T.Color(0x03050b);
 const cam=new T.PerspectiveCamera(45,1,.3,20000);cam.position.set(60,50,70);
 const ren=new T.WebGLRenderer({antialias:devicePixelRatio<1.5,powerPreference:'high-performance'});ren.setPixelRatio(Math.min(devicePixelRatio,1.5));ren.outputEncoding=T.sRGBEncoding;$('stage').appendChild(ren.domElement);
 const ctl=new T.OrbitControls(cam,ren.domElement);ctl.enableDamping=true;ctl.dampingFactor=.08;ctl.autoRotateSpeed=.5;
-// Fester Blickwinkel von schräg oben: Ziehen dreht nur horizontal um das gewählte Schiff, Verschieben bleibt in der Ebene.
-const TILT=T.MathUtils.degToRad(55);ctl.minPolarAngle=ctl.maxPolarAngle=TILT;ctl.screenSpacePanning=false;
+// Die Karte bleibt waagerecht (oben ist immer oben): Ziehen dreht horizontal und vertikal um das gewählte Schiff,
+// von fast senkrecht oben bis knapp unter die Ebene. Verschieben bleibt in der Ebene. TILT ist der Startwinkel.
+const TILT=T.MathUtils.degToRad(55);ctl.minPolarAngle=T.MathUtils.degToRad(2);ctl.maxPolarAngle=T.MathUtils.degToRad(120);ctl.screenSpacePanning=false;
 // Nur rendern, wenn sich etwas geändert hat; ein stillstehendes Bild kostet so nichts.
 let dirty=true;const redraw=()=>dirty=true;ctl.addEventListener('change',redraw);
 {const p=[];for(let i=0;i<1800;i++){const u=Math.random()*2-1,t=Math.random()*2*Math.PI,s=Math.sqrt(1-u*u);p.push(s*Math.cos(t),u,s*Math.sin(t))}
@@ -196,7 +197,7 @@ function bounds(id){
 function focus(id,keepDir){
  const b=bounds(id);if(b.isEmpty())return;
  const c=b.getCenter(new T.Vector3()),r=Math.max(8,b.getSize(new T.Vector3()).length()/2);
- const dir=new T.Vector3().setFromSphericalCoords(1,TILT,keepDir?ctl.getAzimuthalAngle():Math.PI/4);
+ const dir=new T.Vector3().setFromSphericalCoords(1,keepDir?ctl.getPolarAngle():TILT,keepDir?ctl.getAzimuthalAngle():Math.PI/4);
  ctl.target.copy(c);cam.position.copy(c).addScaledVector(dir,r*2.2);ctl.maxDistance=r*12;ctl.update();
 }
 // ---------- Listen ----------
