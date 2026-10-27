@@ -13,7 +13,7 @@ using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.1.0", "paulg")]
+[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.2.0", "paulg")]
 [assembly: MelonGame("CuriousOwlGames", "StellarDrive")]
 
 namespace StellarMap
@@ -43,6 +43,7 @@ namespace StellarMap
         volatile string _lastJson;
         string _lastPublishedJson;
         int _failCount;
+        volatile bool _publishBlocked;
 
         // Game objects, found by name so the mod does not break when a type moves between versions.
         UnityEngine.Object _saver;
@@ -62,8 +63,9 @@ namespace StellarMap
                 description: "Serve the map on this PC at http://localhost:LocalPort/ (only reachable from this PC).");
             _localPort = cat.CreateEntry("LocalPort", 8787,
                 description: "Port of the local map page.");
-            _publish = cat.CreateEntry("Publish", false,
-                description: "Push map.json to the GitHub branch below so the GitHub Pages map shows it. Uses the git login already stored on this PC.");
+            // New name so that players who ran 1.1.0 (default off) also publish when they host.
+            _publish = cat.CreateEntry("PublishWhenHost", true,
+                description: "When this PC hosts the world, push map.json to the GitHub branch below so the GitHub Pages map shows it. Needs git and a GitHub login with write access to the repository (collaborator).");
             _publishSeconds = cat.CreateEntry("PublishSeconds", 60f,
                 description: "Seconds between two pushes to GitHub (at least 30). Only pushed when something changed.");
             _repoUrl = cat.CreateEntry("RepoUrl", "https://github.com/PG38Winner/StellaDriveModKarte.git",
@@ -211,10 +213,10 @@ namespace StellarMap
 
         void MaybePublish(bool host)
         {
-            if (!_publish.Value || _publishing) return;
+            if (!_publish.Value || _publishing || _publishBlocked) return;
             if (!host)
             {
-                if (!_loggedNotHost) { _loggedNotHost = true; Log.Msg("Not the host of this world; map is not published (local map still works)."); }
+                if (!_loggedNotHost) { _loggedNotHost = true; Log.Msg("Not the host of this world; the host publishes the map."); }
                 return;
             }
             _loggedNotHost = false;
@@ -240,18 +242,44 @@ namespace StellarMap
                 Git("add map.json");
                 bool hasHead = Git("rev-parse -q --verify HEAD", ignoreErrors: true) == 0;
                 // Always a single commit: the branch only ever holds the latest map.
-                Git((hasHead ? "commit -q --amend" : "commit -q") + " -m \"Live-Karte aktualisiert\"");
-                if (Git("push -q -f origin HEAD:refs/heads/" + _branch.Value) == 0)
+                // Fixed author: hosts need no git identity and their e-mail stays out of the public repo.
+                Git("-c user.name=StellarMap -c user.email=stellarmap@users.noreply.github.com "
+                    + (hasHead ? "commit -q --amend --reset-author" : "commit -q") + " -m \"Live-Karte aktualisiert\"");
+                string err;
+                if (Git("push -q -f origin HEAD:refs/heads/" + _branch.Value, out err, ignoreErrors: true) == 0)
                 {
                     _lastPublishedJson = json;
                     Log.Msg("Map published to GitHub.");
                 }
+                else if (IsAuthError(err))
+                {
+                    // Not a collaborator or not logged in: retrying every minute would not help.
+                    _publishBlocked = true;
+                    Log.Warning("Map not published: no write access to " + _repoUrl.Value + " (" + err.Trim() + "). "
+                        + "Ask the repository owner to add your GitHub account as collaborator, then log in once with "
+                        + "\"git credential-manager github login\" and restart the game.");
+                }
+                else Fail("git push -> " + err.Trim());
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                _publishBlocked = true;
+                Log.Warning("Map not published: git not found (" + _gitPath.Value + "). Install Git for Windows or set GitPath.");
             }
             catch (Exception e) { Fail("Publish failed: " + e.Message); }
             finally { _publishing = false; }
         }
 
-        int Git(string args, bool ignoreErrors = false)
+        static bool IsAuthError(string err)
+        {
+            var e = err.ToLowerInvariant();
+            return e.Contains("403") || e.Contains("permission") || e.Contains("denied") || e.Contains("authentication")
+                || e.Contains("could not read username") || e.Contains("terminal prompts disabled");
+        }
+
+        int Git(string args, bool ignoreErrors = false) => Git(args, out _, ignoreErrors);
+
+        int Git(string args, out string err, bool ignoreErrors = false)
         {
             var psi = new ProcessStartInfo(_gitPath.Value, args)
             {
@@ -266,7 +294,7 @@ namespace StellarMap
             psi.EnvironmentVariables["GCM_INTERACTIVE"] = "never";
             using (var p = Process.Start(psi))
             {
-                var err = p.StandardError.ReadToEnd();
+                err = p.StandardError.ReadToEnd();
                 p.StandardOutput.ReadToEnd();
                 if (!p.WaitForExit(60000)) { try { p.Kill(); } catch { } throw new Exception("git " + args + " timed out"); }
                 if (p.ExitCode != 0 && !ignoreErrors) Fail("git " + args + " -> " + err.Trim());
