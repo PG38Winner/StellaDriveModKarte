@@ -17,9 +17,10 @@ h1{font-size:18px;font-weight:600;margin:0 0 2px;letter-spacing:.01em}
 #chips button i{width:7px;height:7px;border-radius:50%}
 #chips button[aria-pressed=true]{background:rgba(255,255,255,.12);border-color:var(--fg)}
 #bar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;background:var(--card);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px}
-#bar button{font:inherit;font-size:13px;color:var(--mut);background:transparent;border:1px solid transparent;border-radius:9px;padding:7px 12px;cursor:pointer}
+#bar button,#bar a{font:inherit;font-size:13px;color:var(--mut);background:transparent;border:1px solid transparent;border-radius:9px;padding:7px 12px;cursor:pointer;text-decoration:none}
+#bar button:hover,#bar a:hover{color:var(--fg)}
 #bar button[aria-pressed=true]{color:var(--fg);background:rgba(255,255,255,.1);border-color:var(--line)}
-button:focus-visible{outline:2px solid var(--x);outline-offset:2px}
+button:focus-visible,#bar a:focus-visible{outline:2px solid var(--x);outline-offset:2px}
 @media(max-width:560px){#chips{grid-template-columns:repeat(6,1fr)}}
 </style></head><body>
 <div id="stage" aria-label="Drehbares 3D-Modell der Orbitalstation mit Ring, zwei Etagen und Kreuz in der Mitte"></div>
@@ -28,7 +29,7 @@ button:focus-visible{outline:2px solid var(--x);outline-offset:2px}
  <div class="card" aria-live="polite"><p id="rn">Raum wählen</p><p id="rt">Klicke im Modell auf einen Boden oder wähle unten einen Raum.</p><div id="chips"></div></div>
 </div>
 <div id="bar">
- <button id="bRot" aria-pressed="true">Drehen</button><button id="bUp" aria-pressed="true">Obere Etage</button><button id="bWall" aria-pressed="true">Trennwände</button><button id="bShell" aria-pressed="false">Hülle geschlossen</button><button id="bLab" aria-pressed="true">Namen</button><button id="bReset">Ansicht zurücksetzen</button>
+ <a href="index.html">← Live-Karte</a><button id="bRot" aria-pressed="true">Drehen</button><button id="bUp" aria-pressed="true">Obere Etage</button><button id="bWall" aria-pressed="true">Trennwände</button><button id="bShell" aria-pressed="false">Hülle geschlossen</button><button id="bLab" aria-pressed="true">Namen</button><button id="bReset">Ansicht zurücksetzen</button>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
