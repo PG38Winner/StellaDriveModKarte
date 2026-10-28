@@ -14,7 +14,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.4.0", "paulg")]
+[assembly: MelonInfo(typeof(StellarMap.StellarMapMod), "StellarMap", "1.4.1", "paulg")]
 [assembly: MelonGame("CuriousOwlGames", "StellarDrive")]
 
 namespace StellarMap
@@ -442,7 +442,8 @@ namespace StellarMap
             var res = ctx.Response;
             res.Headers["Cache-Control"] = "no-store";
             res.Headers["Access-Control-Allow-Origin"] = "*";
-            var path = ctx.Request.Url.AbsolutePath.TrimStart('/');
+            // Decoded, so pages with spaces in the name (Orbitalstation, 3D-Modell V1.html) are found.
+            var path = Uri.UnescapeDataString(ctx.Request.Url.AbsolutePath).TrimStart('/');
             if (path == "") path = "index.html";
             string file = path == "map.json" ? _mapFile : Path.GetFullPath(Path.Combine(_wwwDir, path));
             if (path != "map.json" && !file.StartsWith(Path.GetFullPath(_wwwDir), StringComparison.OrdinalIgnoreCase)) file = null;

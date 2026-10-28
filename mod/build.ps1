@@ -28,6 +28,7 @@ if (-not $NoInstall) {
     Copy-Item $out (Join-Path $Game "Mods\StellarMap.dll") -Force
     $www = Join-Path $Game "UserData\StellarMap\www"
     New-Item -ItemType Directory -Force $www | Out-Null
-    Copy-Item (Join-Path $PSScriptRoot "..\index.html") $www -Force
+    # All pages of the site (live map, station model...), so links between them also work locally.
+    Get-ChildItem (Join-Path $PSScriptRoot "..") -Filter *.html | Copy-Item -Destination $www -Force
     Write-Host "Installed into $Game"
 }
