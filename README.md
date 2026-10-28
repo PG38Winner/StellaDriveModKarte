@@ -31,7 +31,7 @@ Voraussetzung: Visual Studio Build Tools mit dem Roslyn-Compiler `csc.exe` und e
 .\mod\build.ps1
 ```
 
-Das Skript kopiert `StellarMap.dll` nach `Mods\` und `index.html` nach `UserData\StellarMap\www\`.
+Das Skript kopiert `StellarMap.dll` nach `Mods\` und alle Seiten (`*.html`, also Live-Karte und Stationsmodell) nach `UserData\StellarMap\www\`.
 
 ## Einstellungen
 
